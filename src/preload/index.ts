@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 const api = {
   // Database operations
@@ -29,6 +29,9 @@ const api = {
   checkDuplicate: (title: string): Promise<boolean> => ipcRenderer.invoke('book:checkDuplicate', title),
   updateCover: (id: number, coverPath: string): Promise<boolean> => ipcRenderer.invoke('book:updateCover', id, coverPath),
   readFile: (filePath: string): Promise<ArrayBuffer> => ipcRenderer.invoke('book:readFile', filePath),
+
+  // File utilities
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
 
   // Reader
   openReader: (bookId: number): Promise<boolean> => ipcRenderer.invoke('reader:open', bookId)

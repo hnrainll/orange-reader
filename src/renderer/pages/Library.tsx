@@ -128,7 +128,7 @@ function Library(): JSX.Element {
     const files = Array.from(e.dataTransfer.files)
     const epubPaths = files
       .filter((f) => f.name.endsWith('.epub'))
-      .map((f) => f.path)
+      .map((f) => window.api.getPathForFile(f))
     if (epubPaths.length > 0) {
       await importFiles(epubPaths)
     }
