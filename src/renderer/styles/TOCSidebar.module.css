@@ -1,0 +1,100 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.3);
+}
+
+.sidebar {
+  position: relative;
+  width: 300px;
+  max-width: 80vw;
+  height: 100%;
+  background-color: var(--bg-primary);
+  box-shadow: 4px 0 16px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  animation: slideIn 0.2s ease;
+}
+
+@keyframes slideIn {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 16px 12px;
+  border-bottom: 0.5px solid var(--border-color);
+  -webkit-app-region: drag;
+  padding-top: calc(var(--drag-region-height) - 20px);
+}
+
+.headerTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.closeButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  -webkit-app-region: no-drag;
+}
+
+.closeButton:hover {
+  background: var(--border-color);
+  color: var(--text-primary);
+}
+
+.tocList {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.tocItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 0.1s;
+  line-height: 1.4;
+}
+
+.tocItem:hover {
+  background-color: var(--bg-secondary);
+}
+
+.tocItemActive {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.tocItemNested {
+  padding-left: 32px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
