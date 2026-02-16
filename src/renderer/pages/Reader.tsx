@@ -74,8 +74,26 @@ function Reader(): JSX.Element {
 
     // Create and configure the view element
     const view = document.createElement('foliate-view')
+    view.style.display = 'block'
+    view.style.width = '100%'
+    view.style.height = '100%'
     viewRef.current = view
     containerRef.current?.appendChild(view)
+
+    // Forward keyboard events from iframe documents to the main window
+    view.addEventListener('load', ((e: CustomEvent<{ doc: Document }>) => {
+      const doc = e.detail.doc
+      doc.addEventListener('keydown', (ke: KeyboardEvent) => {
+        switch (ke.key) {
+          case 'ArrowLeft':
+            (view as any).goLeft()
+            break
+          case 'ArrowRight':
+            (view as any).goRight()
+            break
+        }
+      })
+    }) as EventListener)
 
     // Listen for relocate events
     view.addEventListener('relocate', ((e: CustomEvent<RelocateDetail>) => {
@@ -103,7 +121,8 @@ function Reader(): JSX.Element {
     // Restore reading progress
     const savedProgress = await window.api.getReadingProgress(bookId) as { cfi?: string } | null
     await (view as any).init({
-      lastLocation: savedProgress?.cfi || undefined
+      lastLocation: savedProgress?.cfi || undefined,
+      showTextStart: !savedProgress?.cfi
     })
 
     setLoading(false)
