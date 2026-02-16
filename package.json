@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "pack": "electron-vite build && electron-builder --dir",
+    "dist": "electron-vite build && electron-builder",
     "preview": "electron-vite preview",
     "postinstall": "electron-rebuild --module-dir ."
   },
@@ -15,12 +17,26 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
+  "build": {
+    "appId": "com.orange-reader.app",
+    "productName": "Orange Reader",
+    "mac": {
+      "icon": "build/icon.icns"
+    },
+    "linux": {
+      "icon": "icon.png"
+    },
+    "win": {
+      "icon": "icon.png"
+    }
+  },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^33.2.1",
+    "electron-builder": "^26.7.0",
     "electron-rebuild": "^3.2.9",
     "electron-vite": "^2.3.0",
     "typescript": "^5.6.3",

@@ -18,6 +18,7 @@ export function createReaderWindow(bookId: number): void {
     minWidth: 600,
     minHeight: 500,
     show: false,
+    icon: join(__dirname, '../../build/icon.icns'),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 16 },
     webPreferences: {

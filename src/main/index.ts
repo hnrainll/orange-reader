@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, protocol, net } from 'electron'
+import { app, BrowserWindow, shell, protocol, net, nativeImage } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { initDatabase } from './database'
@@ -11,6 +11,7 @@ function createWindow(): void {
     minWidth: 800,
     minHeight: 600,
     show: false,
+    icon: join(__dirname, '../../build/icon.icns'),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 16 },
     webPreferences: {
@@ -41,6 +42,12 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 app.whenReady().then(() => {
+  // Set dock icon in dev mode (packaged app uses .app bundle icon automatically)
+  if (process.platform === 'darwin' && is.dev) {
+    const icon = nativeImage.createFromPath(join(__dirname, '../../icon_macos.png'))
+    if (!icon.isEmpty()) app.dock.setIcon(icon)
+  }
+
   protocol.handle('safe-file', (request) => {
     const filePath = decodeURIComponent(request.url.replace('safe-file://', ''))
     return net.fetch('file://' + filePath)
