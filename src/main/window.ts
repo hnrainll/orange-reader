@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, screen } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 
@@ -12,9 +12,11 @@ export function createReaderWindow(bookId: number): void {
     return
   }
 
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize
+
   const readerWindow = new BrowserWindow({
-    width: 900,
-    height: 700,
+    width,
+    height,
     minWidth: 600,
     minHeight: 500,
     show: false,

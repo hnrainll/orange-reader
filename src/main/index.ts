@@ -5,9 +5,12 @@ import { initDatabase } from './database'
 import { registerIpcHandlers } from './ipc-handlers'
 
 function createWindow(): void {
+  const { screen } = require('electron')
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize
+
   const mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width,
+    height,
     minWidth: 800,
     minHeight: 600,
     show: false,
