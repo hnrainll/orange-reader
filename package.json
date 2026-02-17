@@ -9,7 +9,8 @@
     "pack": "electron-vite build && electron-builder --dir",
     "dist": "electron-vite build && electron-builder",
     "preview": "electron-vite preview",
-    "postinstall": "electron-rebuild --module-dir ."
+    "postinstall": "electron-rebuild --module-dir .",
+    "clean": "rm -rf out dist node_modules/.cache"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^3.0.0",
