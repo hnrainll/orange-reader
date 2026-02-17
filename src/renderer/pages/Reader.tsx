@@ -17,12 +17,23 @@ interface RelocateDetail {
   tocItem?: { label?: string; href?: string }
 }
 
+function getReaderCSS(fontSize: number): string {
+  return `
+    html, body {
+      font-size: ${fontSize}px !important;
+      -webkit-text-size-adjust: none;
+      text-size-adjust: none;
+    }
+  `
+}
+
 function Reader(): JSX.Element {
   const params = new URLSearchParams(window.location.search)
   const bookId = Number(params.get('bookId'))
 
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<HTMLElement | null>(null)
+  const initGenRef = useRef(0) // generation counter to cancel stale async initReader
   const [book, setBook] = useState<Book | null>(null)
   const [loading, setLoading] = useState(true)
   const [progress, setProgress] = useState(0)
@@ -37,50 +48,42 @@ function Reader(): JSX.Element {
     return saved ? parseInt(saved, 10) : 18
   })
 
-  const applyFontSize = useCallback((size: number) => {
-    const view = viewRef.current as any
-    if (view?.renderer) {
-      view.renderer.setStyles?.({
-        fontSize: `${size}px`
-      })
-    }
-  }, [])
-
-  const handleFontSizeChange = useCallback((size: number) => {
-    setFontSize(size)
-    localStorage.setItem('readerFontSize', String(size))
-    applyFontSize(size)
-  }, [applyFontSize])
-
-  const handleThemeChange = useCallback((newTheme: 'light' | 'dark') => {
-    if (newTheme !== theme) {
-      toggleTheme()
-    }
-  }, [theme, toggleTheme])
-
   const initReader = useCallback(async () => {
     if (!bookId) return
 
+    // Increment generation — any earlier initReader still in-flight will bail out
+    const gen = ++initGenRef.current
+
     const bookData = await window.api.getBookById(bookId) as Book | null
-    if (!bookData) return
+    if (gen !== initGenRef.current || !bookData) return
     setBook(bookData)
 
-    // Read the epub file
     const fileBuffer = await window.api.readFile(bookData.file_path)
+    if (gen !== initGenRef.current) return
     const file = new File([fileBuffer], 'book.epub', { type: 'application/epub+zip' })
 
-    // Import foliate-js view module
     await import('../../../foliate-js/view.js')
+    if (gen !== initGenRef.current) return
 
-    // Create and configure the view element
+    // Clean up container before appending new view
+    if (viewRef.current) {
+      (viewRef.current as any).close?.()
+      viewRef.current.remove()
+      viewRef.current = null
+    }
+    if (containerRef.current) {
+      containerRef.current.innerHTML = ''
+    }
+
     const view = document.createElement('foliate-view')
     view.style.display = 'block'
     view.style.width = '100%'
     view.style.height = '100%'
     viewRef.current = view
+
     containerRef.current?.appendChild(view)
 
-    // Forward keyboard events from iframe documents to the main window
+    // Forward keyboard events from iframe content
     view.addEventListener('load', ((e: CustomEvent<{ doc: Document }>) => {
       const doc = e.detail.doc
       doc.addEventListener('keydown', (ke: KeyboardEvent) => {
@@ -95,7 +98,7 @@ function Reader(): JSX.Element {
       })
     }) as EventListener)
 
-    // Listen for relocate events
+    // Listen for relocate events (includes progress saving)
     view.addEventListener('relocate', ((e: CustomEvent<RelocateDetail>) => {
       const detail = e.detail
       if (detail.fraction != null) {
@@ -107,12 +110,19 @@ function Reader(): JSX.Element {
       if (detail.tocItem?.href) {
         setCurrentHref(detail.tocItem.href)
       }
+      if (bookId && detail.cfi != null && detail.fraction != null) {
+        window.api.saveReadingProgress(bookId, detail.cfi, detail.fraction)
+      }
     }) as EventListener)
 
-    // Open the book
     await (view as any).open(file)
+    if (gen !== initGenRef.current) return
 
-    // Get TOC
+    // Apply initial font size via renderer.setStyles
+    const savedSize = localStorage.getItem('readerFontSize')
+    const currentSize = savedSize ? parseInt(savedSize, 10) : 18
+    ;(view as any).renderer.setStyles?.(getReaderCSS(currentSize))
+
     const bookObj = (view as any).book
     if (bookObj?.toc) {
       setToc(bookObj.toc)
@@ -120,38 +130,46 @@ function Reader(): JSX.Element {
 
     // Restore reading progress
     const savedProgress = await window.api.getReadingProgress(bookId) as { cfi?: string } | null
-    await (view as any).init({
-      lastLocation: savedProgress?.cfi || undefined,
-      showTextStart: !savedProgress?.cfi
-    })
+    const cfi = savedProgress?.cfi
+    try {
+      await (view as any).init({
+        lastLocation: cfi || undefined,
+        showTextStart: !cfi
+      })
+    } catch (e) {
+      console.warn('Failed to restore reading position, starting from beginning:', e)
+      await (view as any).init({ showTextStart: true })
+    }
 
+    if (gen !== initGenRef.current) return
     setLoading(false)
   }, [bookId])
+
+  const handleFontSizeChange = useCallback((size: number) => {
+    setFontSize(size)
+    localStorage.setItem('readerFontSize', String(size))
+
+    const view = viewRef.current as any
+    if (!view?.renderer) return
+    view.renderer.setStyles(getReaderCSS(size))
+  }, [])
+
+  const handleThemeChange = useCallback((newTheme: 'light' | 'dark') => {
+    if (newTheme !== theme) {
+      toggleTheme()
+    }
+  }, [theme, toggleTheme])
 
   useEffect(() => {
     initReader()
     return () => {
       if (viewRef.current) {
         (viewRef.current as any).close?.()
+        viewRef.current.remove()
+        viewRef.current = null
       }
     }
   }, [initReader])
-
-  // Save progress on relocate
-  useEffect(() => {
-    const view = viewRef.current
-    if (!view || !bookId) return
-
-    const saveProgress = (e: Event): void => {
-      const detail = (e as CustomEvent<RelocateDetail>).detail
-      if (detail.cfi != null && detail.fraction != null) {
-        window.api.saveReadingProgress(bookId, detail.cfi, detail.fraction)
-      }
-    }
-
-    view.addEventListener('relocate', saveProgress)
-    return () => view.removeEventListener('relocate', saveProgress)
-  }, [bookId, loading])
 
   // Keyboard navigation
   useEffect(() => {
