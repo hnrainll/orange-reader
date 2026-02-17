@@ -17,13 +17,22 @@ interface RelocateDetail {
   tocItem?: { label?: string; href?: string }
 }
 
-function getReaderCSS(fontSize: number): string {
+function getReaderCSS(fontSize: number, theme: 'light' | 'dark'): string {
+  const darkCSS = theme === 'dark' ? `
+    html, body {
+      background-color: #1c1c1e !important;
+      color: #f5f5f7 !important;
+    }
+    a { color: #ff8c5a !important; }
+  ` : ''
+
   return `
     html, body {
       font-size: ${fontSize}px !important;
       -webkit-text-size-adjust: none;
       text-size-adjust: none;
     }
+    ${darkCSS}
   `
 }
 
@@ -118,10 +127,11 @@ function Reader(): JSX.Element {
     await (view as any).open(file)
     if (gen !== initGenRef.current) return
 
-    // Apply initial font size via renderer.setStyles
+    // Apply initial font size and theme via renderer.setStyles
     const savedSize = localStorage.getItem('readerFontSize')
     const currentSize = savedSize ? parseInt(savedSize, 10) : 18
-    ;(view as any).renderer.setStyles?.(getReaderCSS(currentSize))
+    const savedTheme = (localStorage.getItem('theme') as 'light' | 'dark') || 'light'
+    ;(view as any).renderer.setStyles?.(getReaderCSS(currentSize, savedTheme))
 
     const bookObj = (view as any).book
     if (bookObj?.toc) {
@@ -151,14 +161,18 @@ function Reader(): JSX.Element {
 
     const view = viewRef.current as any
     if (!view?.renderer) return
-    view.renderer.setStyles(getReaderCSS(size))
-  }, [])
+    view.renderer.setStyles(getReaderCSS(size, theme))
+  }, [theme])
 
   const handleThemeChange = useCallback((newTheme: 'light' | 'dark') => {
     if (newTheme !== theme) {
       toggleTheme()
     }
-  }, [theme, toggleTheme])
+    // Apply theme to epub content
+    const view = viewRef.current as any
+    if (!view?.renderer) return
+    view.renderer.setStyles(getReaderCSS(fontSize, newTheme))
+  }, [theme, toggleTheme, fontSize])
 
   useEffect(() => {
     initReader()
