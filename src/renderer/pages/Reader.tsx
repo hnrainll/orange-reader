@@ -17,7 +17,14 @@ interface RelocateDetail {
   tocItem?: { label?: string; href?: string }
 }
 
-function getReaderCSS(fontSize: number, theme: 'light' | 'dark'): string {
+function getReaderCSS(
+  fontSize: number,
+  theme: 'light' | 'dark',
+  lineHeight: number,
+  fontFamily: 'original' | 'serif' | 'sans-serif',
+  letterSpacing: number,
+  paragraphSpacing: number
+): string {
   const darkCSS = theme === 'dark' ? `
     html, body {
       background-color: #1c1c1e !important;
@@ -26,12 +33,22 @@ function getReaderCSS(fontSize: number, theme: 'light' | 'dark'): string {
     a { color: #ff8c5a !important; }
   ` : ''
 
+  const fontFamilyCSS = fontFamily === 'serif'
+    ? `font-family: "Georgia", "STSong", "SimSun", serif !important;`
+    : fontFamily === 'sans-serif'
+    ? `font-family: "system-ui", "-apple-system", "PingFang SC", "Microsoft YaHei", sans-serif !important;`
+    : ''
+
   return `
     html, body {
       font-size: ${fontSize}px !important;
       -webkit-text-size-adjust: none;
       text-size-adjust: none;
+      line-height: ${lineHeight} !important;
+      letter-spacing: ${letterSpacing}em !important;
+      ${fontFamilyCSS}
     }
+    p { margin-bottom: ${paragraphSpacing}em !important; }
     ${darkCSS}
   `
 }
@@ -56,6 +73,16 @@ function Reader(): JSX.Element {
     const saved = localStorage.getItem('readerFontSize')
     return saved ? parseInt(saved, 10) : 18
   })
+  const [lineHeight, setLineHeight] = useState(() =>
+    parseFloat(localStorage.getItem('readerLineHeight') || '1.6'))
+  const [fontFamily, setFontFamily] = useState<'original' | 'serif' | 'sans-serif'>(() =>
+    (localStorage.getItem('readerFontFamily') as 'original' | 'serif' | 'sans-serif') || 'original')
+  const [letterSpacing, setLetterSpacing] = useState(() =>
+    parseFloat(localStorage.getItem('readerLetterSpacing') || '0'))
+  const [paragraphSpacing, setParagraphSpacing] = useState(() =>
+    parseFloat(localStorage.getItem('readerParagraphSpacing') || '1'))
+  const [contentWidth, setContentWidth] = useState(() =>
+    parseInt(localStorage.getItem('readerContentWidth') || '720', 10))
 
   const initReader = useCallback(async () => {
     if (!bookId) return
@@ -127,11 +154,17 @@ function Reader(): JSX.Element {
     await (view as any).open(file)
     if (gen !== initGenRef.current) return
 
-    // Apply initial font size and theme via renderer.setStyles
+    // Apply initial styles via renderer.setStyles
     const savedSize = localStorage.getItem('readerFontSize')
     const currentSize = savedSize ? parseInt(savedSize, 10) : 18
     const savedTheme = (localStorage.getItem('theme') as 'light' | 'dark') || 'light'
-    ;(view as any).renderer.setStyles?.(getReaderCSS(currentSize, savedTheme))
+    const savedLineHeight = parseFloat(localStorage.getItem('readerLineHeight') || '1.6')
+    const savedFontFamily = (localStorage.getItem('readerFontFamily') as 'original' | 'serif' | 'sans-serif') || 'original'
+    const savedLetterSpacing = parseFloat(localStorage.getItem('readerLetterSpacing') || '0')
+    const savedParagraphSpacing = parseFloat(localStorage.getItem('readerParagraphSpacing') || '1')
+    const savedContentWidth = parseInt(localStorage.getItem('readerContentWidth') || '720', 10)
+    ;(view as any).renderer.setStyles?.(getReaderCSS(currentSize, savedTheme, savedLineHeight, savedFontFamily, savedLetterSpacing, savedParagraphSpacing))
+    ;(view as any).renderer.setAttribute?.('max-inline-size', `${savedContentWidth}px`)
 
     const bookObj = (view as any).book
     if (bookObj?.toc) {
@@ -158,21 +191,58 @@ function Reader(): JSX.Element {
   const handleFontSizeChange = useCallback((size: number) => {
     setFontSize(size)
     localStorage.setItem('readerFontSize', String(size))
-
     const view = viewRef.current as any
     if (!view?.renderer) return
-    view.renderer.setStyles(getReaderCSS(size, theme))
-  }, [theme])
+    view.renderer.setStyles(getReaderCSS(size, theme, lineHeight, fontFamily, letterSpacing, paragraphSpacing))
+  }, [theme, lineHeight, fontFamily, letterSpacing, paragraphSpacing])
 
   const handleThemeChange = useCallback((newTheme: 'light' | 'dark') => {
     if (newTheme !== theme) {
       toggleTheme()
     }
-    // Apply theme to epub content
     const view = viewRef.current as any
     if (!view?.renderer) return
-    view.renderer.setStyles(getReaderCSS(fontSize, newTheme))
-  }, [theme, toggleTheme, fontSize])
+    view.renderer.setStyles(getReaderCSS(fontSize, newTheme, lineHeight, fontFamily, letterSpacing, paragraphSpacing))
+  }, [theme, toggleTheme, fontSize, lineHeight, fontFamily, letterSpacing, paragraphSpacing])
+
+  const handleLineHeightChange = useCallback((val: number) => {
+    setLineHeight(val)
+    localStorage.setItem('readerLineHeight', String(val))
+    const view = viewRef.current as any
+    if (!view?.renderer) return
+    view.renderer.setStyles(getReaderCSS(fontSize, theme, val, fontFamily, letterSpacing, paragraphSpacing))
+  }, [fontSize, theme, fontFamily, letterSpacing, paragraphSpacing])
+
+  const handleFontFamilyChange = useCallback((val: 'original' | 'serif' | 'sans-serif') => {
+    setFontFamily(val)
+    localStorage.setItem('readerFontFamily', val)
+    const view = viewRef.current as any
+    if (!view?.renderer) return
+    view.renderer.setStyles(getReaderCSS(fontSize, theme, lineHeight, val, letterSpacing, paragraphSpacing))
+  }, [fontSize, theme, lineHeight, letterSpacing, paragraphSpacing])
+
+  const handleLetterSpacingChange = useCallback((val: number) => {
+    setLetterSpacing(val)
+    localStorage.setItem('readerLetterSpacing', String(val))
+    const view = viewRef.current as any
+    if (!view?.renderer) return
+    view.renderer.setStyles(getReaderCSS(fontSize, theme, lineHeight, fontFamily, val, paragraphSpacing))
+  }, [fontSize, theme, lineHeight, fontFamily, paragraphSpacing])
+
+  const handleParagraphSpacingChange = useCallback((val: number) => {
+    setParagraphSpacing(val)
+    localStorage.setItem('readerParagraphSpacing', String(val))
+    const view = viewRef.current as any
+    if (!view?.renderer) return
+    view.renderer.setStyles(getReaderCSS(fontSize, theme, lineHeight, fontFamily, letterSpacing, val))
+  }, [fontSize, theme, lineHeight, fontFamily, letterSpacing])
+
+  const handleContentWidthChange = useCallback((val: number) => {
+    setContentWidth(val)
+    localStorage.setItem('readerContentWidth', String(val))
+    const view = viewRef.current as any
+    view?.renderer?.setAttribute?.('max-inline-size', `${val}px`)
+  }, [])
 
   useEffect(() => {
     initReader()
@@ -269,8 +339,18 @@ function Reader(): JSX.Element {
         <SettingsPanel
           fontSize={fontSize}
           theme={theme}
+          lineHeight={lineHeight}
+          fontFamily={fontFamily}
+          letterSpacing={letterSpacing}
+          paragraphSpacing={paragraphSpacing}
+          contentWidth={contentWidth}
           onFontSizeChange={handleFontSizeChange}
           onThemeChange={handleThemeChange}
+          onLineHeightChange={handleLineHeightChange}
+          onFontFamilyChange={handleFontFamilyChange}
+          onLetterSpacingChange={handleLetterSpacingChange}
+          onParagraphSpacingChange={handleParagraphSpacingChange}
+          onContentWidthChange={handleContentWidthChange}
           onClose={() => setShowSettings(false)}
         />
       )}

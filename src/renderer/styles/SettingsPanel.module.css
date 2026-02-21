@@ -84,13 +84,14 @@
   margin-bottom: 8px;
 }
 
-.fontSizeControl {
+/* Step controls (font size, line height, letter spacing, etc.) */
+.stepControl {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
-.fontSizeButton {
+.stepButton {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -105,17 +106,18 @@
   transition: background-color 0.15s;
 }
 
-.fontSizeButton:hover {
+.stepButton:hover {
   background: var(--bg-secondary);
 }
 
-.fontSizeValue {
+.stepValue {
   font-size: 14px;
   color: var(--text-primary);
-  min-width: 36px;
+  min-width: 52px;
   text-align: center;
 }
 
+/* Theme buttons */
 .themeOptions {
   display: flex;
   gap: 8px;
@@ -148,4 +150,31 @@
 .themeButtonDark {
   background: #1c1c1e;
   color: #f5f5f7;
+}
+
+/* Font family buttons */
+.fontFamilyOptions {
+  display: flex;
+  gap: 8px;
+}
+
+.fontFamilyButton {
+  flex: 1;
+  padding: 10px 6px;
+  border: 2px solid var(--border-color);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: center;
+  font-size: 13px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  transition: border-color 0.15s;
+}
+
+.fontFamilyButton:hover {
+  border-color: var(--text-secondary);
+}
+
+.fontFamilyButtonActive {
+  border-color: var(--accent);
 }
