@@ -12,7 +12,10 @@ import {
   getReadingProgress,
   getAllReadingProgress,
   updateBookCover,
-  bookExistsByTitle
+  bookExistsByTitle,
+  addAnnotation,
+  getAnnotations,
+  deleteAnnotation
 } from './database'
 
 export function registerIpcHandlers(): void {
@@ -110,6 +113,19 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('reader:open', (_event, bookId: number) => {
     createReaderWindow(bookId)
+    return true
+  })
+
+  ipcMain.handle('db:addAnnotation', (_event, bookId: number, cfi: string, color: string, type: string, text: string | null) => {
+    return addAnnotation(bookId, cfi, color, type, text)
+  })
+
+  ipcMain.handle('db:getAnnotations', (_event, bookId: number) => {
+    return getAnnotations(bookId)
+  })
+
+  ipcMain.handle('db:deleteAnnotation', (_event, id: number) => {
+    deleteAnnotation(id)
     return true
   })
 }

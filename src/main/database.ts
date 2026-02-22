@@ -34,6 +34,17 @@ export function initDatabase(): void {
       updated_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS annotations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      book_id INTEGER NOT NULL,
+      cfi TEXT NOT NULL,
+      color TEXT NOT NULL DEFAULT '#FFE066',
+      type TEXT NOT NULL DEFAULT 'highlight',
+      text TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+    );
   `)
 }
 
@@ -82,4 +93,18 @@ export function updateBookCover(id: number, coverPath: string): void {
 export function bookExistsByTitle(title: string): boolean {
   const row = db.prepare('SELECT 1 FROM books WHERE title = ?').get(title) as unknown
   return !!row
+}
+
+export function addAnnotation(bookId: number, cfi: string, color: string, type: string, text: string | null): unknown {
+  const stmt = db.prepare('INSERT INTO annotations (book_id, cfi, color, type, text) VALUES (?, ?, ?, ?, ?)')
+  const result = stmt.run(bookId, cfi, color, type, text)
+  return db.prepare('SELECT * FROM annotations WHERE id = ?').get(result.lastInsertRowid)
+}
+
+export function getAnnotations(bookId: number): unknown[] {
+  return db.prepare('SELECT * FROM annotations WHERE book_id = ? ORDER BY created_at ASC').all(bookId)
+}
+
+export function deleteAnnotation(id: number): void {
+  db.prepare('DELETE FROM annotations WHERE id = ?').run(id)
 }

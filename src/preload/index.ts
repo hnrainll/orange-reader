@@ -34,7 +34,15 @@ const api = {
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
 
   // Reader
-  openReader: (bookId: number): Promise<boolean> => ipcRenderer.invoke('reader:open', bookId)
+  openReader: (bookId: number): Promise<boolean> => ipcRenderer.invoke('reader:open', bookId),
+
+  // Annotations
+  addAnnotation: (bookId: number, cfi: string, color: string, type: string, text: string | null): Promise<unknown> =>
+    ipcRenderer.invoke('db:addAnnotation', bookId, cfi, color, type, text),
+  getAnnotations: (bookId: number): Promise<unknown[]> =>
+    ipcRenderer.invoke('db:getAnnotations', bookId),
+  deleteAnnotation: (id: number): Promise<boolean> =>
+    ipcRenderer.invoke('db:deleteAnnotation', id)
 }
 
 contextBridge.exposeInMainWorld('api', api)

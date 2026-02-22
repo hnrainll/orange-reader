@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import type { Book } from '../../shared/types'
+import type { Book, Annotation } from '../../shared/types'
 import TOCSidebar from '../components/TOCSidebar'
 import SettingsPanel from '../components/SettingsPanel'
+import HighlightPopup from '../components/HighlightPopup'
 import { useTheme } from '../hooks/useTheme'
 import styles from '../styles/Reader.module.css'
 
@@ -15,6 +16,18 @@ interface RelocateDetail {
   fraction?: number
   cfi?: string
   tocItem?: { label?: string; href?: string }
+}
+
+interface SelectionPopup {
+  x: number
+  y: number
+  // Create mode
+  cfi?: string
+  text?: string
+  // Edit mode (clicking existing annotation)
+  existingAnnotationId?: number
+  existingCfi?: string
+  existingText?: string
 }
 
 function getReaderCSS(
@@ -59,7 +72,7 @@ function Reader(): JSX.Element {
 
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<HTMLElement | null>(null)
-  const initGenRef = useRef(0) // generation counter to cancel stale async initReader
+  const initGenRef = useRef(0)
   const [book, setBook] = useState<Book | null>(null)
   const [loading, setLoading] = useState(true)
   const [progress, setProgress] = useState(0)
@@ -84,10 +97,17 @@ function Reader(): JSX.Element {
   const [contentWidth, setContentWidth] = useState(() =>
     parseInt(localStorage.getItem('readerContentWidth') || '720', 10))
 
+  // Highlight state
+  const [selectionPopup, setSelectionPopup] = useState<SelectionPopup | null>(null)
+  // Refs for annotation data — used in event listeners to avoid stale closures
+  const annotationsRef = useRef<Annotation[]>([])
+  const currentSectionRef = useRef<{ doc: Document; index: number } | null>(null)
+  // Overlayer static methods — populated after dynamic import
+  const OverlayerRef = useRef<{ highlight: Function; underline: Function } | null>(null)
+
   const initReader = useCallback(async () => {
     if (!bookId) return
 
-    // Increment generation — any earlier initReader still in-flight will bail out
     const gen = ++initGenRef.current
 
     const bookData = await window.api.getBookById(bookId) as Book | null
@@ -100,6 +120,11 @@ function Reader(): JSX.Element {
 
     await import('../../../foliate-js/view.js')
     if (gen !== initGenRef.current) return
+
+    // Import Overlayer for draw functions
+    const { Overlayer: Ol } = await import('../../../foliate-js/overlayer.js') as any
+    if (gen !== initGenRef.current) return
+    OverlayerRef.current = Ol
 
     // Clean up container before appending new view
     if (viewRef.current) {
@@ -119,9 +144,46 @@ function Reader(): JSX.Element {
 
     containerRef.current?.appendChild(view)
 
-    // Forward keyboard events from iframe content
-    view.addEventListener('load', ((e: CustomEvent<{ doc: Document }>) => {
-      const doc = e.detail.doc
+    // ── Annotation: draw-annotation ──────────────────────────────────────
+    // Called by foliate-js when an annotation needs to be rendered onto the Overlayer SVG.
+    // We provide the draw function (highlight/underline) and the color from the annotation data.
+    view.addEventListener('draw-annotation', ((e: CustomEvent) => {
+      const { draw, annotation } = e.detail
+      const Ol = OverlayerRef.current as any
+      if (!Ol) return
+      const color = annotation.color || '#FFE066'
+      const type = annotation.type || 'highlight'
+      draw(type === 'underline' ? Ol.underline : Ol.highlight, { color })
+    }) as EventListener)
+
+    // ── Annotation: show-annotation ──────────────────────────────────────
+    // Called when user clicks on an existing annotation in the iframe.
+    // We find the annotation by CFI and show an edit popup at the click position.
+    view.addEventListener('show-annotation', ((e: CustomEvent) => {
+      const { value, range } = e.detail
+      const ann = annotationsRef.current.find(a => a.cfi === value)
+      if (!ann) return
+      const section = currentSectionRef.current
+      if (!section) return
+      const iframe = section.doc.defaultView?.frameElement as HTMLIFrameElement | null
+      if (!iframe) return
+      const iframeRect = iframe.getBoundingClientRect()
+      const rangeRect = range.getBoundingClientRect()
+      setSelectionPopup({
+        x: iframeRect.left + rangeRect.left + rangeRect.width / 2,
+        y: iframeRect.top + rangeRect.top,
+        existingAnnotationId: ann.id,
+        existingCfi: ann.cfi,
+        existingText: ann.text || undefined,
+      })
+    }) as EventListener)
+
+    // ── Section load: keyboard + selection + apply annotations ───────────
+    view.addEventListener('load', ((e: CustomEvent<{ doc: Document; index: number }>) => {
+      const { doc, index } = e.detail
+      currentSectionRef.current = { doc, index }
+
+      // Forward keyboard navigation from inside the iframe
       doc.addEventListener('keydown', (ke: KeyboardEvent) => {
         switch (ke.key) {
           case 'ArrowLeft':
@@ -132,9 +194,52 @@ function Reader(): JSX.Element {
             break
         }
       })
+
+      // Show highlight popup on mouseup when text is selected
+      doc.addEventListener('mouseup', () => {
+        const sel = doc.getSelection()
+        if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+          setSelectionPopup(null)
+          return
+        }
+        const range = sel.getRangeAt(0)
+        const text = sel.toString().trim()
+        if (!text) {
+          setSelectionPopup(null)
+          return
+        }
+        const iframe = doc.defaultView?.frameElement as HTMLIFrameElement | null
+        if (!iframe) return
+        const iframeRect = iframe.getBoundingClientRect()
+        const rangeRect = range.getBoundingClientRect()
+        const cfi = (viewRef.current as any)?.getCFI?.(index, range)
+        if (!cfi) return
+        setSelectionPopup({
+          x: iframeRect.left + rangeRect.left + rangeRect.width / 2,
+          y: iframeRect.top + rangeRect.top,
+          cfi,
+          text,
+        })
+      })
+
+      // Hide popup when selection collapses (user clicked without selecting)
+      doc.addEventListener('selectionchange', () => {
+        const sel = doc.getSelection()
+        if (!sel || sel.isCollapsed) {
+          // Only clear create-mode popup; preserve edit-mode popup (user clicked annotation)
+          setSelectionPopup(prev => (prev?.existingAnnotationId != null ? prev : null))
+        }
+      })
+
+      // Apply any saved annotations that belong to this section.
+      // addAnnotation resolves the CFI and only draws if the section's overlayer exists.
+      const currentView = viewRef.current as any
+      for (const ann of annotationsRef.current) {
+        currentView?.addAnnotation?.({ value: ann.cfi, color: ann.color, type: ann.type })
+      }
     }) as EventListener)
 
-    // Listen for relocate events (includes progress saving)
+    // Listen for relocate events (progress saving)
     view.addEventListener('relocate', ((e: CustomEvent<RelocateDetail>) => {
       const detail = e.detail
       if (detail.fraction != null) {
@@ -154,7 +259,7 @@ function Reader(): JSX.Element {
     await (view as any).open(file)
     if (gen !== initGenRef.current) return
 
-    // Apply initial styles via renderer.setStyles
+    // Apply initial styles
     const savedSize = localStorage.getItem('readerFontSize')
     const currentSize = savedSize ? parseInt(savedSize, 10) : 18
     const savedTheme = (localStorage.getItem('theme') as 'light' | 'dark') || 'light'
@@ -185,8 +290,59 @@ function Reader(): JSX.Element {
     }
 
     if (gen !== initGenRef.current) return
+
+    // Load saved annotations from DB and apply to the current section
+    const savedAnnotations = await window.api.getAnnotations(bookId) as Annotation[]
+    if (gen !== initGenRef.current) return
+    annotationsRef.current = savedAnnotations
+    for (const ann of savedAnnotations) {
+      (view as any).addAnnotation?.({ value: ann.cfi, color: ann.color, type: ann.type })
+    }
+
     setLoading(false)
   }, [bookId])
+
+  // ── Highlight handlers ─────────────────────────────────────────────────
+
+  // Called when user clicks a color swatch in the popup
+  const handleSelectColor = useCallback(async (color: string) => {
+    if (!selectionPopup) return
+    const view = viewRef.current as any
+
+    if (selectionPopup.existingAnnotationId != null && selectionPopup.existingCfi) {
+      // Edit mode: delete old annotation, create new with chosen color
+      const { existingAnnotationId: id, existingCfi: oldCfi, existingText: text } = selectionPopup
+      setSelectionPopup(null)
+      await window.api.deleteAnnotation(id)
+      view?.deleteAnnotation?.({ value: oldCfi })
+      const newAnn = await window.api.addAnnotation(bookId, oldCfi, color, 'highlight', text || null) as Annotation
+      const updated = [...annotationsRef.current.filter(a => a.id !== id), newAnn]
+      annotationsRef.current = updated
+      view?.addAnnotation?.({ value: oldCfi, color, type: 'highlight' })
+    } else if (selectionPopup.cfi) {
+      // Create mode: save new annotation with the chosen color
+      const { cfi, text } = selectionPopup
+      setSelectionPopup(null)
+      const newAnn = await window.api.addAnnotation(bookId, cfi, color, 'highlight', text || null) as Annotation
+      annotationsRef.current = [...annotationsRef.current, newAnn]
+      view?.addAnnotation?.({ value: cfi, color, type: 'highlight' })
+      // Clear the text selection so it doesn't interfere with further interaction
+      currentSectionRef.current?.doc?.getSelection()?.removeAllRanges()
+    }
+  }, [selectionPopup, bookId])
+
+  // Called when user clicks the delete button in the popup
+  const handleDeleteAnnotation = useCallback(async () => {
+    if (!selectionPopup?.existingAnnotationId || !selectionPopup?.existingCfi) return
+    const { existingAnnotationId: id, existingCfi: oldCfi } = selectionPopup
+    setSelectionPopup(null)
+    await window.api.deleteAnnotation(id)
+    const view = viewRef.current as any
+    view?.deleteAnnotation?.({ value: oldCfi })
+    annotationsRef.current = annotationsRef.current.filter(a => a.id !== id)
+  }, [selectionPopup])
+
+  // ── Settings handlers ──────────────────────────────────────────────────
 
   const handleFontSizeChange = useCallback((size: number) => {
     setFontSize(size)
@@ -271,6 +427,7 @@ function Reader(): JSX.Element {
         case 'Escape':
           setShowTOC(false)
           setShowSettings(false)
+          setSelectionPopup(null)
           break
       }
     }
@@ -352,6 +509,16 @@ function Reader(): JSX.Element {
           onParagraphSpacingChange={handleParagraphSpacingChange}
           onContentWidthChange={handleContentWidthChange}
           onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      {selectionPopup && (
+        <HighlightPopup
+          x={selectionPopup.x}
+          y={selectionPopup.y}
+          hasExisting={selectionPopup.existingAnnotationId != null}
+          onSelectColor={handleSelectColor}
+          onDelete={selectionPopup.existingAnnotationId != null ? handleDeleteAnnotation : undefined}
         />
       )}
     </div>

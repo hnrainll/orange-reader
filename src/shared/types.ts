@@ -13,3 +13,13 @@ export interface ReadingProgress {
   fraction: number
   updated_at: string
 }
+
+export interface Annotation {
+  id: number
+  book_id: number
+  cfi: string
+  color: string
+  type: string
+  text: string | null
+  created_at: string
+}
