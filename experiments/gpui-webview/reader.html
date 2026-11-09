@@ -15,11 +15,13 @@
   <input id="file" type="file" accept=".epub,application/epub+zip">
   <button id="previous">上一页</button>
   <button id="next">下一页</button>
+  <button id="highlight">高亮选中</button>
   <span id="status">等待打开 EPUB</span>
 </header>
 <main id="reader"></main>
 <script type="module">
   import '/foliate-js/view.js'
+  import { Overlayer } from '/foliate-js/overlayer.js'
 
   const status = document.getElementById('status')
   const reader = document.getElementById('reader')
@@ -30,17 +32,28 @@
   }
 
   let view
+  let lastSelection
+  let lastLocation
   async function open(file) {
     view?.close?.()
     reader.replaceChildren()
     view = document.createElement('foliate-view')
     reader.append(view)
     status.textContent = '正在载入…'
+    lastSelection = undefined
+    lastLocation = undefined
     try {
       await view.open(file)
+      view.addEventListener('draw-annotation', event => {
+        const { draw, annotation } = event.detail
+        draw(Overlayer.highlight, { color: annotation.color })
+      })
       view.addEventListener('relocate', event => {
         const { fraction, cfi } = event.detail
         status.textContent = `${file.name} · ${Math.round((fraction || 0) * 100)}%`
+        const location = JSON.stringify({ fraction, cfi })
+        if (location === lastLocation) return
+        lastLocation = location
         report('relocate', { fraction, cfi })
       })
       view.addEventListener('load', event => {
@@ -51,6 +64,7 @@
           const text = selection.toString().trim()
           if (!text) return
           const cfi = view.getCFI(index, selection.getRangeAt(0))
+          lastSelection = { text, cfi }
           report('selection', { text, cfi })
         })
         doc.addEventListener('keydown', event => {
@@ -72,9 +86,23 @@
   })
   document.getElementById('previous').onclick = () => view?.goLeft()
   document.getElementById('next').onclick = () => view?.goRight()
+  async function highlightSelection() {
+    if (!view || !lastSelection?.cfi) {
+      report('highlight-error', { message: '请先在书页里选中文字' })
+      return
+    }
+    try {
+      await view.addAnnotation({ value: lastSelection.cfi, color: '#FFE066', type: 'highlight' })
+      report('highlight', lastSelection)
+    } catch (error) {
+      report('highlight-error', { message: String(error) })
+    }
+  }
+  document.getElementById('highlight').onclick = highlightSelection
   window.readerFromRust = command => {
     if (command === 'next') view?.goRight()
     if (command === 'previous') view?.goLeft()
+    if (command === 'highlight') highlightSelection()
     report('rust-command', { command })
   }
   report('ready')

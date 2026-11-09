@@ -54,6 +54,11 @@ impl Render for Spike {
                             .label("GPUI 下一页")
                             .on_click(cx.listener(|this, _, _, cx| this.send("next", cx))),
                     )
+                    .child(
+                        Button::new("highlight")
+                            .label("GPUI 高亮选中")
+                            .on_click(cx.listener(|this, _, _, cx| this.send("highlight", cx))),
+                    )
                     .child("在下方选择 EPUB；页面事件会输出到终端"),
             )
             .child(div().flex_1().child(self.webview.clone()))
