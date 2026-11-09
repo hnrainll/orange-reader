@@ -1,0 +1,15 @@
+# macOS GPUI + WebView 验证
+
+这个独立 Cargo 工程使用 GPUI Kit 的 `gpui-webview` 将 WKWebView 嵌入 GPUI 窗口。阅读页直接导入仓库中的 `foliate-js`，不依赖 Electron。
+
+运行：
+
+```sh
+cargo run --manifest-path experiments/gpui-webview/Cargo.toml -- /path/to/book.epub
+```
+
+也可以不传 EPUB 路径，然后在页面中选择文件。GPUI 顶部两个按钮通过 `evaluate_script` 控制翻页。阅读页通过 `window.ipc.postMessage` 向 Rust 报告就绪、加载、定位、选中文本和 CFI；事件显示在启动终端。
+
+验证时检查：书籍能打开、章节图片与样式正常、左右翻页、选中文字后终端出现 CFI、GPUI 按钮能翻页、窗口缩放后布局正常、阅读区域与顶部按钮之间的键盘焦点切换正常。
+
+这是独立实验，没有替换现有 `cargo run` 应用；本地 HTTP 服务仅绑定 `127.0.0.1`，退出程序即停止。

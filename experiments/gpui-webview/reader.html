@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orange Reader WebView 验证</title>
+<style>
+  body { margin: 0; font: 14px -apple-system, BlinkMacSystemFont, sans-serif; color: #31281f; background: #fffaf3; }
+  header { display: flex; gap: 10px; align-items: center; padding: 10px 16px; border-bottom: 1px solid #eadfd2; }
+  button { border: 1px solid #d8c8b7; border-radius: 6px; background: white; padding: 6px 12px; cursor: pointer; }
+  #status { margin-left: auto; color: #74685c; }
+  #reader { height: calc(100vh - 54px); }
+  foliate-view { display: block; width: 100%; height: 100%; }
+</style>
+<header>
+  <input id="file" type="file" accept=".epub,application/epub+zip">
+  <button id="previous">上一页</button>
+  <button id="next">下一页</button>
+  <span id="status">等待打开 EPUB</span>
+</header>
+<main id="reader"></main>
+<script type="module">
+  import '/foliate-js/view.js'
+
+  const status = document.getElementById('status')
+  const reader = document.getElementById('reader')
+  const report = (kind, detail = {}) => {
+    const message = JSON.stringify({ kind, ...detail })
+    window.ipc?.postMessage(message)
+    console.log('reader event:', message)
+  }
+
+  let view
+  async function open(file) {
+    view?.close?.()
+    reader.replaceChildren()
+    view = document.createElement('foliate-view')
+    reader.append(view)
+    status.textContent = '正在载入…'
+    try {
+      await view.open(file)
+      view.addEventListener('relocate', event => {
+        const { fraction, cfi } = event.detail
+        status.textContent = `${file.name} · ${Math.round((fraction || 0) * 100)}%`
+        report('relocate', { fraction, cfi })
+      })
+      view.addEventListener('load', event => {
+        const { doc, index } = event.detail
+        doc.addEventListener('mouseup', () => {
+          const selection = doc.getSelection()
+          if (!selection || selection.isCollapsed || !selection.rangeCount) return
+          const text = selection.toString().trim()
+          if (!text) return
+          const cfi = view.getCFI(index, selection.getRangeAt(0))
+          report('selection', { text, cfi })
+        })
+        doc.addEventListener('keydown', event => {
+          if (event.key === 'ArrowLeft') view.goLeft()
+          if (event.key === 'ArrowRight') view.goRight()
+        })
+      })
+      await view.init({})
+      report('opened', { name: file.name })
+    } catch (error) {
+      status.textContent = '打开失败：' + error.message
+      report('error', { message: String(error) })
+    }
+  }
+
+  document.getElementById('file').addEventListener('change', event => {
+    const file = event.target.files?.[0]
+    if (file) open(file)
+  })
+  document.getElementById('previous').onclick = () => view?.goLeft()
+  document.getElementById('next').onclick = () => view?.goRight()
+  window.readerFromRust = command => {
+    if (command === 'next') view?.goRight()
+    if (command === 'previous') view?.goLeft()
+    report('rust-command', { command })
+  }
+  report('ready')
+
+  const startup = '/book.epub'
+  const response = await fetch(startup)
+  if (response.ok) open(new File([await response.blob()], 'book.epub', { type: 'application/epub+zip' }))
+</script>
+</html>
