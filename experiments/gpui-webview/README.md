@@ -1,6 +1,6 @@
-# macOS GPUI + WebView 验证
+# macOS GPUI + WebView 阅读器
 
-这个独立 Cargo 工程使用 GPUI Kit 的 `gpui-webview` 将 WKWebView 嵌入 GPUI 窗口。阅读页直接导入仓库中的 `foliate-js`，不依赖 Electron。
+这个 Cargo 工作区成员使用 GPUI Kit 的 `gpui-webview` 将 WKWebView 嵌入 GPUI 窗口。阅读页直接导入仓库中的 `foliate-js`，不依赖 Electron。仓库根目录执行 `cargo run` 会启动此版本。
 
 运行：
 
@@ -14,4 +14,4 @@ cargo run --manifest-path experiments/gpui-webview/Cargo.toml -- /path/to/book.e
 
 验证时检查：书籍能打开、章节图片与样式正常、左右翻页、选中文字后终端出现 `selection` 和 CFI、点击“GPUI 高亮选中”后文字变黄且终端出现 `highlight`、窗口缩放后布局正常、阅读区域与顶部按钮之间的键盘焦点切换正常。
 
-这是独立迁移版本，没有替换现有 `cargo run` 应用；本地 HTTP 服务仅绑定 `127.0.0.1`，阅读窗口关闭后停止。目录、改色和删除的实际点击效果仍需在 macOS 上人工确认。
+此版本是仓库根目录 `cargo run` 的默认入口；本地 HTTP 服务仅绑定 `127.0.0.1`，阅读窗口关闭后停止。目录、改色和删除的实际点击效果仍需在 macOS 上人工确认。

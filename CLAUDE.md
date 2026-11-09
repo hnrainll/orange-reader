@@ -1,6 +1,6 @@
 # Orange Reader 项目说明
 
-当前默认入口为 Rust + GPUI 原生原型 `src-native/main.rs`，使用 `cargo run` 启动。`experiments/gpui-webview/` 是 GPUI Kit + WKWebView 迁移版本，复用 `foliate-js/` 渲染 EPUB；`src/` 和 npm 配置是迁移前的 Electron 实现。
+当前默认入口为 `experiments/gpui-webview/` 的 GPUI Kit + WKWebView 版本，使用 `cargo run` 启动，复用 `foliate-js/` 渲染 EPUB。`cargo run -p orange-reader` 可运行较早的 GPUI 原生文字原型 `src-native/main.rs`；`src/` 和 npm 配置是迁移前的 Electron 实现。
 
 ## 结构
 

@@ -4,6 +4,10 @@ version = "2.0.0"
 edition = "2021"
 description = "Native EPUB reader built with GPUI"
 
+[workspace]
+members = [".", "experiments/gpui-webview"]
+default-members = ["experiments/gpui-webview"]
+
 [[bin]]
 name = "orange-reader"
 path = "src-native/main.rs"

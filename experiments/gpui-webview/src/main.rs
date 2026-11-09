@@ -206,7 +206,7 @@ impl Render for LibraryView {
             .child(
                 h_flex()
                     .gap_3()
-                    .child("Orange Reader · GPUI Kit 书库验证")
+                    .child("Orange Reader · 书库")
                     .child(
                         Button::new("import")
                             .label("导入 EPUB")

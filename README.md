@@ -1,6 +1,6 @@
 # Orange Reader
 
-Native EPUB reader built with Rust and [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui). `cargo run` starts the first native prototype. A separate [GPUI Kit + WebView migration build](experiments/gpui-webview/README.md) uses the existing `foliate-js/` for EPUB layout. The Electron implementation remains in `src/` and the npm configuration while migration continues.
+Native EPUB reader built with Rust and [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui). `cargo run` starts the [GPUI Kit + WebView reader](experiments/gpui-webview/README.md), using the existing `foliate-js/` for EPUB layout. The earlier GPUI text prototype and Electron implementation remain available while migration continues.
 
 ## Run
 
@@ -16,7 +16,11 @@ If Rustup has no default toolchain, run `rustup default stable` first. For an is
 ORANGE_READER_DATA_DIR=/tmp/orange-reader-test cargo run
 ```
 
-## Native implementation
+## Earlier GPUI text prototype
+
+```sh
+cargo run -p orange-reader
+```
 
 - GPUI book library with cover images, reading progress, file picker and drag-and-drop EPUB import.
 - A separate native GPUI reading window per opening, with chapter navigation and text pagination.
@@ -33,7 +37,7 @@ The native EPUB renderer currently extracts text from XHTML. It does not yet rep
 cargo run --manifest-path experiments/gpui-webview/Cargo.toml
 ```
 
-This build opens the existing library in GPUI Kit and reads EPUB content with `foliate-js` in a macOS WKWebView. It imports books, displays covers and progress, opens books, and persists CFI reading positions and highlights in the existing SQLite tables. Its GPUI toolbar controls font size, font family, line spacing, letter spacing, paragraph spacing, content width, and theme. The toolbar also opens the contents and highlight panels in the WebView; these panels can navigate chapters, recolor highlights, and delete them. It is still a migration build: the main `cargo run` entry point still starts the earlier native text prototype, and the remaining visual interactions need manual macOS checks.
+This build opens the existing library in GPUI Kit and reads EPUB content with `foliate-js` in a macOS WKWebView. It imports books, displays covers and progress, opens books, and persists CFI reading positions and highlights in the existing SQLite tables. Its GPUI toolbar controls font size, font family, line spacing, letter spacing, paragraph spacing, content width, and theme. The toolbar also opens the contents and highlight panels in the WebView; these panels can navigate chapters, recolor highlights, and delete them. It is now the default `cargo run` entry point. The remaining visual interactions need manual macOS checks.
 
 ## Code layout
 
@@ -47,5 +51,5 @@ This build opens the existing library in GPUI Kit and reads EPUB content with `f
 
 ```sh
 cargo check
-cargo test
+cargo test --workspace
 ```

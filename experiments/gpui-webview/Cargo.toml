@@ -1,5 +1,5 @@
 [package]
-name = "orange-reader-webview-spike"
+name = "orange-reader-gpui"
 version = "0.1.0"
 edition = "2024"
 publish = false
