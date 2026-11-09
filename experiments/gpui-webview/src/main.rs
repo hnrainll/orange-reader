@@ -1,3 +1,8 @@
+#[path = "../../../src-native/epub.rs"]
+mod epub;
+#[path = "../../../src-native/store.rs"]
+mod store;
+
 use gpui_kit::component::{button::Button, h_flex, v_flex};
 use gpui_kit::*;
 use gpui_webview::WebView;
@@ -6,9 +11,118 @@ use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     path::{Component, Path, PathBuf},
+    rc::Rc,
     sync::Arc,
     thread,
 };
+use store::{Book, Store};
+
+struct LibraryView {
+    store: Rc<Store>,
+    books: Vec<Book>,
+    error: Option<String>,
+}
+
+impl LibraryView {
+    fn new(store: Rc<Store>, cx: &mut App) -> Entity<Self> {
+        let books = store.books().unwrap_or_default();
+        cx.new(|_| Self {
+            store,
+            books,
+            error: None,
+        })
+    }
+
+    fn open_book(&mut self, book: Book, _: &mut Window, cx: &mut Context<Self>) {
+        let bytes = match fs::read(&book.file_path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                self.error = Some(format!("无法读取《{}》：{error}", book.title));
+                cx.notify();
+                return;
+            }
+        };
+        let url = start_server(Some(bytes));
+        if let Err(error) = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+            Spike::new(window, cx, &url)
+        }) {
+            self.error = Some(format!("无法打开阅读窗口：{error}"));
+            cx.notify();
+        }
+    }
+
+    fn import_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let mut errors = Vec::new();
+        for path in paths {
+            if !path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("epub"))
+            {
+                continue;
+            }
+            match epub::parse(&path).and_then(|epub| self.store.import(&path, &epub)) {
+                Ok(()) => {}
+                Err(error) => errors.push(format!("{}: {error}", path.display())),
+            }
+        }
+        self.books = self.store.books().unwrap_or_default();
+        self.error = (!errors.is_empty()).then(|| errors.join("\n"));
+        cx.notify();
+    }
+
+    fn choose_files(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let result = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("导入 EPUB".into()),
+        });
+        cx.spawn(async move |view, cx| {
+            if let Ok(Ok(Some(paths))) = result.await {
+                let _ = view.update(cx, |library, cx| library.import_paths(paths, cx));
+            }
+        })
+        .detach();
+    }
+}
+
+impl Render for LibraryView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .p_4()
+            .gap_3()
+            .child(
+                h_flex()
+                    .gap_3()
+                    .child("Orange Reader · GPUI Kit 书库验证")
+                    .child(
+                        Button::new("import")
+                            .label("导入 EPUB")
+                            .on_click(cx.listener(Self::choose_files)),
+                    ),
+            )
+            .child(self.error.clone().unwrap_or_default())
+            .child(if self.books.is_empty() {
+                "书库为空。点击“导入 EPUB”添加书籍。".to_owned()
+            } else {
+                format!("{} 本书", self.books.len())
+            })
+            .children(self.books.iter().cloned().map(|book| {
+                let title = book.title.clone();
+                let author = book.author.clone();
+                div()
+                    .id(("book", book.id as usize))
+                    .cursor_pointer()
+                    .p_2()
+                    .child(format!("{title}  ·  {author}"))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_book(book.clone(), window, cx)
+                    }))
+            }))
+    }
+}
 
 struct Spike {
     webview: Entity<WebView>,
@@ -124,11 +238,7 @@ fn serve(mut stream: TcpStream, foliate_dir: &Path, book: Option<&[u8]>) -> std:
     stream.write_all(&body)
 }
 
-fn main() {
-    let book = env::args_os().nth(1).map(|path| {
-        let path = PathBuf::from(path);
-        fs::read(&path).unwrap_or_else(|error| panic!("无法读取 {}: {error}", path.display()))
-    });
+fn start_server(book: Option<Vec<u8>>) -> String {
     let foliate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../foliate-js");
     let listener = TcpListener::bind("127.0.0.1:0").expect("无法启动本地阅读页服务器");
     let address = listener.local_addr().expect("无法获取本地端口");
@@ -148,13 +258,35 @@ fn main() {
 
     let url = format!("http://{address}/");
     eprintln!("阅读页：{url}");
+    url
+}
+
+fn main() {
+    let book_path = env::args_os().nth(1).map(PathBuf::from);
+    let direct_url = book_path.map(|path| {
+        let bytes =
+            fs::read(&path).unwrap_or_else(|error| panic!("无法读取 {}: {error}", path.display()));
+        start_server(Some(bytes))
+    });
+    let store = if direct_url.is_none() {
+        Some(Rc::new(Store::open().expect("无法打开现有书库")))
+    } else {
+        None
+    };
     gpui_kit::application()
         .with_assets(gpui_kit::assets::Assets)
         .run(move |cx| {
             gpui_kit::init(cx);
-            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-                Spike::new(window, cx, &url)
-            })
-            .expect("无法打开 GPUI 窗口");
+            if let Some(url) = &direct_url {
+                gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                    Spike::new(window, cx, url)
+                })
+                .expect("无法打开 GPUI 阅读窗口");
+            } else if let Some(store) = &store {
+                gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+                    LibraryView::new(store.clone(), cx)
+                })
+                .expect("无法打开 GPUI 书库窗口");
+            }
         });
 }
