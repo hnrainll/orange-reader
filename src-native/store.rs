@@ -1,6 +1,6 @@
 use crate::epub::Epub;
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::{fs, path::{Path, PathBuf}};
 use uuid::Uuid;
 
@@ -21,6 +21,15 @@ pub struct Annotation {
     pub paragraph: usize,
     pub text: String,
     pub color: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct WebAnnotation {
+    pub id: i64,
+    pub cfi: String,
+    pub color: String,
+    pub kind: String,
+    pub text: Option<String>,
 }
 
 pub struct Store {
@@ -133,6 +142,47 @@ impl Store {
         Ok(())
     }
 
+    pub fn web_progress(&self, book_id: i64) -> Result<Option<(String, f64)>> {
+        self.conn.query_row("SELECT cfi,fraction FROM reading_progress WHERE book_id=?1",
+            [book_id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .optional().map_err(Into::into)
+    }
+
+    pub fn save_web_progress(&self, book_id: i64, cfi: &str, fraction: f64) -> Result<()> {
+        self.conn.execute("INSERT INTO reading_progress(book_id,cfi,fraction) VALUES(?1,?2,?3)
+            ON CONFLICT(book_id) DO UPDATE SET cfi=excluded.cfi,fraction=excluded.fraction,
+            updated_at=datetime('now')", params![book_id, cfi, fraction])?;
+        Ok(())
+    }
+
+    pub fn web_annotations(&self, book_id: i64) -> Result<Vec<WebAnnotation>> {
+        let mut stmt = self.conn.prepare("SELECT id,cfi,color,type,text FROM annotations
+            WHERE book_id=?1 ORDER BY id ASC")?;
+        let rows = stmt.query_map([book_id], |row| Ok(WebAnnotation {
+            id: row.get(0)?, cfi: row.get(1)?, color: row.get(2)?,
+            kind: row.get(3)?, text: row.get(4)?,
+        }))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
+    pub fn add_web_annotation(&self, book_id: i64, cfi: &str, color: &str, text: &str) -> Result<i64> {
+        self.conn.execute("INSERT INTO annotations(book_id,cfi,color,type,text)
+            VALUES(?1,?2,?3,'highlight',?4)", params![book_id, cfi, color, text])?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn recolor_web_annotation(&self, book_id: i64, cfi: &str, color: &str) -> Result<()> {
+        self.conn.execute("UPDATE annotations SET color=?3 WHERE book_id=?1 AND cfi=?2",
+            params![book_id, cfi, color])?;
+        Ok(())
+    }
+
+    pub fn delete_web_annotation(&self, book_id: i64, cfi: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM annotations WHERE book_id=?1 AND cfi=?2",
+            params![book_id, cfi])?;
+        Ok(())
+    }
+
     pub fn annotations(&self, book_id: i64) -> Result<Vec<Annotation>> {
         let mut stmt = self.conn.prepare("SELECT id,chapter,paragraph,text,color FROM native_annotations WHERE book_id=?1")?;
         let rows = stmt.query_map([book_id], |r| Ok(Annotation {
@@ -179,5 +229,45 @@ impl Store {
         self.conn.execute("INSERT INTO native_settings(key,value) VALUES(?1,?2)
             ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key, value])?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod web_tests {
+    use super::Store;
+    use rusqlite::Connection;
+    use std::path::PathBuf;
+
+    #[test]
+    fn web_progress_and_annotations_round_trip() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE reading_progress (
+            book_id INTEGER PRIMARY KEY, cfi TEXT NOT NULL, fraction REAL DEFAULT 0,
+            updated_at TEXT DEFAULT (datetime('now')));
+            CREATE TABLE annotations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, book_id INTEGER NOT NULL,
+            cfi TEXT NOT NULL, color TEXT NOT NULL, type TEXT NOT NULL, text TEXT);")
+            .unwrap();
+        let store = Store { conn, root: PathBuf::new() };
+        let cfi = "epubcfi(/6/12!/4/42,/1:53,/1:97)";
+
+        assert!(store.web_progress(7).unwrap().is_none());
+        store.save_web_progress(7, cfi, 0.25).unwrap();
+        assert_eq!(store.web_progress(7).unwrap(), Some((cfi.to_owned(), 0.25)));
+        store.save_web_progress(7, "epubcfi(/6/14!/4)", 0.5).unwrap();
+        assert_eq!(store.web_progress(7).unwrap(), Some(("epubcfi(/6/14!/4)".to_owned(), 0.5)));
+
+        let id = store.add_web_annotation(7, cfi, "#FFE066", "选中的文字").unwrap();
+        let annotations = store.web_annotations(7).unwrap();
+        assert_eq!(annotations.len(), 1);
+        assert_eq!(annotations[0].id, id);
+        assert_eq!(annotations[0].cfi, cfi);
+        assert_eq!(annotations[0].color, "#FFE066");
+        assert_eq!(annotations[0].kind, "highlight");
+        assert_eq!(annotations[0].text.as_deref(), Some("选中的文字"));
+        store.recolor_web_annotation(7, cfi, "#A8E6CF").unwrap();
+        assert_eq!(store.web_annotations(7).unwrap()[0].color, "#A8E6CF");
+        store.delete_web_annotation(7, cfi).unwrap();
+        assert!(store.web_annotations(7).unwrap().is_empty());
     }
 }

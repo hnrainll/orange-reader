@@ -1,12 +1,13 @@
 # Orange Reader 项目说明
 
-当前主应用为 Rust + GPUI，入口是 `src-native/main.rs`，使用 `cargo run` 启动。`src/`、`foliate-js/` 和 npm 配置是迁移前的 Electron 实现，仅作为参考保留。
+当前默认入口为 Rust + GPUI 原生原型 `src-native/main.rs`，使用 `cargo run` 启动。`experiments/gpui-webview/` 是 GPUI Kit + WKWebView 迁移版本，复用 `foliate-js/` 渲染 EPUB；`src/` 和 npm 配置是迁移前的 Electron 实现。
 
 ## 结构
 
 - `src-native/epub.rs`：读取 EPUB ZIP、OPF、spine 与 XHTML 文本。
 - `src-native/store.rs`：SQLite 书库、阅读进度、标注及旧数据迁移。
 - `src-native/main.rs`：GPUI 书库与阅读窗口。
+- `experiments/gpui-webview/`：GPUI Kit 书库与 WebView 阅读窗口，接入现有 CFI 进度和高亮数据库。
 
 ## 数据兼容
 

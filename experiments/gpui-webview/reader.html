@@ -9,7 +9,20 @@
   button { border: 1px solid #d8c8b7; border-radius: 6px; background: white; padding: 6px 12px; cursor: pointer; }
   #status { margin-left: auto; color: #74685c; }
   #reader { height: calc(100vh - 54px); }
+  #panel { display: none; position: absolute; z-index: 10; top: 54px; bottom: 0; left: 0;
+    width: min(340px, 80vw); overflow: auto; background: #fffaf3; border-right: 1px solid #eadfd2;
+    box-shadow: 3px 0 14px #0002; padding: 12px; box-sizing: border-box; }
+  #panel.open { display: block; }
+  #panel button { display: block; width: 100%; text-align: left; margin: 3px 0; }
+  #panel .nested { padding-left: 24px; }
+  #panel .note { border-bottom: 1px solid #eadfd2; padding: 8px 0; }
+  #panel .colors { display: flex; gap: 4px; }
+  #panel .colors button { width: 32px; height: 28px; flex: none; }
   foliate-view { display: block; width: 100%; height: 100%; }
+  body.dark { color: #f5f5f7; background: #1c1c1e; }
+  body.dark header { border-color: #403b37; }
+  body.dark button { color: #f5f5f7; background: #302b28; border-color: #5b5148; }
+  body.dark #panel { color: #f5f5f7; background: #242426; border-color: #403b37; }
 </style>
 <header>
   <input id="file" type="file" accept=".epub,application/epub+zip">
@@ -19,14 +32,19 @@
   <span id="status">等待打开 EPUB</span>
 </header>
 <main id="reader"></main>
+<aside id="panel"></aside>
 <script type="module">
   import '/foliate-js/view.js'
   import { Overlayer } from '/foliate-js/overlayer.js'
 
   const status = document.getElementById('status')
   const reader = document.getElementById('reader')
+  const panel = document.getElementById('panel')
+  let panelKind = null
+  const colors = ['#FFE066', '#FF9AA2', '#A8E6CF', '#A0C4FF']
+  let managed = false
   const report = (kind, detail = {}) => {
-    const message = JSON.stringify({ kind, ...detail })
+    const message = JSON.stringify({ kind, managed, ...detail })
     window.ipc?.postMessage(message)
     console.log('reader event:', message)
   }
@@ -34,7 +52,89 @@
   let view
   let lastSelection
   let lastLocation
-  async function open(file) {
+  let savedAnnotations = []
+  function closePanel() { panel.classList.remove('open'); panelKind = null }
+  function showPanel(kind) {
+    if (panelKind === kind) { closePanel(); return }
+    panelKind = kind
+    panel.classList.add('open')
+    renderPanel()
+  }
+  function renderPanel() {
+    panel.replaceChildren()
+    const heading = document.createElement('h3')
+    heading.textContent = panelKind === 'toc' ? '目录' : '高亮'
+    panel.append(heading)
+    if (panelKind === 'toc') {
+      const addItems = (items, depth = 0) => {
+        for (const item of items || []) {
+          const button = document.createElement('button')
+          button.textContent = item.label || item.href || '未命名章节'
+          if (depth) button.classList.add('nested')
+          button.onclick = () => { view?.goTo(item.href); closePanel() }
+          panel.append(button)
+          addItems(item.subitems, depth + 1)
+        }
+      }
+      addItems(view?.book?.toc)
+    } else if (panelKind === 'notes') {
+      for (const annotation of savedAnnotations) {
+        const row = document.createElement('div')
+        row.className = 'note'
+        const jump = document.createElement('button')
+        jump.textContent = annotation.text || annotation.cfi
+        jump.onclick = () => { view?.goTo(annotation.cfi); closePanel() }
+        row.append(jump)
+        const swatches = document.createElement('div')
+        swatches.className = 'colors'
+        for (const color of colors) {
+          const button = document.createElement('button')
+          button.style.backgroundColor = color
+          button.title = '更改高亮颜色'
+          button.onclick = async () => {
+            annotation.color = color
+            await view?.addAnnotation({ value: annotation.cfi, color, type: annotation.type })
+            report('annotation-color', { cfi: annotation.cfi, color })
+            renderPanel()
+          }
+          swatches.append(button)
+        }
+        row.append(swatches)
+        const remove = document.createElement('button')
+        remove.textContent = '删除高亮'
+        remove.onclick = async () => {
+          await view?.deleteAnnotation({ value: annotation.cfi })
+          savedAnnotations = savedAnnotations.filter(item => item.cfi !== annotation.cfi)
+          report('annotation-delete', { cfi: annotation.cfi })
+          renderPanel()
+        }
+        row.append(remove)
+        panel.append(row)
+      }
+    }
+  }
+  let settings = { fontSize: 18, lineHeight: 1.6, contentWidth: 720,
+    letterSpacing: 0, paragraphSpacing: 1, fontFamily: 'original', dark: false }
+  function applySettings(next) {
+    settings = { ...settings, ...next }
+    document.body.classList.toggle('dark', settings.dark)
+    if (!view?.renderer) return
+    const css = `html, body {
+      font-size: ${settings.fontSize}px !important;
+      line-height: ${settings.lineHeight} !important;
+      letter-spacing: ${settings.letterSpacing}em !important;
+      -webkit-text-size-adjust: none;
+      text-size-adjust: none;
+      ${settings.dark ? 'background-color: #1c1c1e !important; color: #f5f5f7 !important;' : ''}
+    }
+    ${settings.fontFamily === 'original' ? '' : `html, body { font-family: ${settings.fontFamily === 'serif' ? 'Georgia, "Songti SC", serif' : '-apple-system, "PingFang SC", sans-serif'} !important; }`}
+    p, li, blockquote { margin-bottom: ${settings.paragraphSpacing}em !important; }`
+    view.renderer.setStyles?.(css)
+    view.renderer.setAttribute?.('max-inline-size', `${settings.contentWidth}px`)
+    report('settings-applied', settings)
+  }
+  window.applyReaderSettings = applySettings
+  async function open(file, session = null) {
     view?.close?.()
     reader.replaceChildren()
     view = document.createElement('foliate-view')
@@ -42,11 +142,19 @@
     status.textContent = '正在载入…'
     lastSelection = undefined
     lastLocation = undefined
+    managed = session !== null
+    savedAnnotations = session?.annotations || []
+    closePanel()
     try {
       await view.open(file)
+      applySettings(session?.settings || {})
       view.addEventListener('draw-annotation', event => {
         const { draw, annotation } = event.detail
-        draw(Overlayer.highlight, { color: annotation.color })
+        draw(annotation.type === 'underline' ? Overlayer.underline : Overlayer.highlight,
+          { color: annotation.color })
+      })
+      view.addEventListener('show-annotation', event => {
+        if (savedAnnotations.some(item => item.cfi === event.detail.value)) showPanel('notes')
       })
       view.addEventListener('relocate', event => {
         const { fraction, cfi } = event.detail
@@ -58,6 +166,10 @@
       })
       view.addEventListener('load', event => {
         const { doc, index } = event.detail
+        for (const annotation of savedAnnotations) {
+          view.addAnnotation({ value: annotation.cfi, color: annotation.color, type: annotation.type })
+            .catch(error => console.warn('无法恢复高亮', error))
+        }
         doc.addEventListener('mouseup', () => {
           const selection = doc.getSelection()
           if (!selection || selection.isCollapsed || !selection.rangeCount) return
@@ -72,8 +184,21 @@
           if (event.key === 'ArrowRight') view.goRight()
         })
       })
-      await view.init({})
+      const location = session?.location
+      try {
+        await view.init({ lastLocation: location || undefined, showTextStart: !location })
+      } catch (error) {
+        console.warn('无法恢复阅读位置，从开头打开', error)
+        await view.init({ showTextStart: true })
+      }
+      if (savedAnnotations.length) {
+        await Promise.all(savedAnnotations.map(annotation =>
+          view.addAnnotation({ value: annotation.cfi, color: annotation.color, type: annotation.type })
+            .catch(error => console.warn('无法恢复高亮', error))))
+        report('annotations-restored', { count: savedAnnotations.length })
+      }
       report('opened', { name: file.name })
+      if (panelKind) renderPanel()
     } catch (error) {
       status.textContent = '打开失败：' + error.message
       report('error', { message: String(error) })
@@ -93,7 +218,11 @@
     }
     try {
       await view.addAnnotation({ value: lastSelection.cfi, color: '#FFE066', type: 'highlight' })
-      report('highlight', lastSelection)
+      if (!savedAnnotations.some(item => item.cfi === lastSelection.cfi)) {
+        savedAnnotations.push({ cfi: lastSelection.cfi, color: '#FFE066', type: 'highlight', text: lastSelection.text })
+        report('highlight', lastSelection)
+      }
+      if (panelKind === 'notes') renderPanel()
     } catch (error) {
       report('highlight-error', { message: String(error) })
     }
@@ -103,12 +232,17 @@
     if (command === 'next') view?.goRight()
     if (command === 'previous') view?.goLeft()
     if (command === 'highlight') highlightSelection()
+    if (command === 'toc' || command === 'notes') showPanel(command)
     report('rust-command', { command })
   }
   report('ready')
 
   const startup = '/book.epub'
   const response = await fetch(startup)
-  if (response.ok) open(new File([await response.blob()], 'book.epub', { type: 'application/epub+zip' }))
+  if (response.ok) {
+    const sessionResponse = await fetch('/session.json')
+    const session = sessionResponse.ok ? await sessionResponse.json() : null
+    open(new File([await response.blob()], 'book.epub', { type: 'application/epub+zip' }), session)
+  }
 </script>
 </html>

@@ -5606,6 +5606,7 @@ dependencies = [
  "roxmltree 0.20.0",
  "rusqlite",
  "scraper",
+ "serde_json",
  "uuid",
  "zip",
 ]

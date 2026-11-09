@@ -1,6 +1,6 @@
 # Orange Reader
 
-Native EPUB reader built with Rust and [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui). The previous Electron implementation remains in `src/`, `foliate-js/`, and the npm configuration as a reference during migration. `cargo run` starts the GPUI app.
+Native EPUB reader built with Rust and [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui). `cargo run` starts the first native prototype. A separate [GPUI Kit + WebView migration build](experiments/gpui-webview/README.md) uses the existing `foliate-js/` for EPUB layout. The Electron implementation remains in `src/` and the npm configuration while migration continues.
 
 ## Run
 
@@ -27,12 +27,21 @@ ORANGE_READER_DATA_DIR=/tmp/orange-reader-test cargo run
 
 The native EPUB renderer currently extracts text from XHTML. It does not yet reproduce EPUB CSS, inline images, fixed-layout pages, or exact CFI positions. Pagination uses character estimates, so a page may need scrolling. Text selection is limited to one paragraph at a time, and a highlight colors its paragraph. The original Electron reader is still available through `npm run dev` during this transition.
 
+## GPUI Kit + WebView migration build
+
+```sh
+cargo run --manifest-path experiments/gpui-webview/Cargo.toml
+```
+
+This build opens the existing library in GPUI Kit and reads EPUB content with `foliate-js` in a macOS WKWebView. It imports books, displays covers and progress, opens books, and persists CFI reading positions and highlights in the existing SQLite tables. Its GPUI toolbar controls font size, font family, line spacing, letter spacing, paragraph spacing, content width, and theme. The toolbar also opens the contents and highlight panels in the WebView; these panels can navigate chapters, recolor highlights, and delete them. It is still a migration build: the main `cargo run` entry point still starts the earlier native text prototype, and the remaining visual interactions need manual macOS checks.
+
 ## Code layout
 
 - `src-native/main.rs`: GPUI book library, reading windows and interaction.
 - `src-native/epub.rs`: EPUB ZIP, package and chapter parsing.
 - `src-native/store.rs`: SQLite data access and legacy data compatibility.
-- `src/`, `foliate-js/`: previous Electron implementation.
+- `foliate-js/`: EPUB rendering code used by the GPUI Kit migration build and the previous Electron implementation.
+- `src/`: previous Electron implementation.
 
 ## Check
 
