@@ -1,0 +1,25 @@
+[package]
+name = "orange-reader"
+version = "2.0.0"
+edition = "2021"
+description = "Native EPUB reader built with GPUI"
+
+[[bin]]
+name = "orange-reader"
+path = "src-native/main.rs"
+
+[dependencies]
+anyhow = "1"
+dirs = "6"
+gpui = "0.2.2"
+gpui-selectable-text = "0.1.0"
+percent-encoding = "2"
+roxmltree = "0.20"
+rusqlite = { version = "0.37", features = ["bundled"] }
+scraper = "0.24"
+uuid = { version = "1", features = ["v4"] }
+zip = "2"
+
+[profile.dev]
+debug = 0
+
