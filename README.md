@@ -1,55 +1,50 @@
 # Orange Reader
 
-Native EPUB reader built with Rust and [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui). `cargo run` starts the [GPUI Kit + WebView reader](experiments/gpui-webview/README.md), using the existing `foliate-js/` for EPUB layout. The earlier GPUI text prototype and Electron implementation remain available while migration continues.
+macOS EPUB 阅读器。应用界面使用 GPUI Kit，书页由嵌入的 WKWebView 和 foliate-js 排版。阅读器及其网页资源一起编译进可执行文件，运行时不需要 Electron、Node.js 或源码目录。
 
-## Run
+## 开发运行
 
-Install stable Rust and the platform build tools. On macOS, GPUI also needs Xcode and its Metal Toolchain (`xcodebuild -downloadComponent MetalToolchain`).
+需要稳定版 Rust、Xcode 与 Metal Toolchain。
 
 ```sh
 cargo run
 ```
 
-If Rustup has no default toolchain, run `rustup default stable` first. For an isolated library during testing:
+启动后可从书库导入 EPUB，也可把 EPUB 拖入书库。`cargo run -- /path/to/book.epub` 可直接打开单本书；`cargo run -- --book-id 1` 可打开书库中的指定书籍。
+
+开发和测试时可用 `ORANGE_READER_DATA_DIR=/private/tmp/orange-reader-test cargo run` 指定隔离书库，避免修改日常阅读数据。
+
+## 功能与数据
+
+- 书库展示封面、作者和进度；支持导入、阅读与删除。
+- 书页支持目录、翻页、选字、高亮、改色和删除高亮。
+- 阅读位置以 EPUB CFI 保存；字号、字体、行距、字距、段距、内容宽度和明暗主题可保存。
+- SQLite 书库沿用旧 Electron 版本的 `books`、`reading_progress` 和 `annotations` 表；旧 GPUI 文字原型的进度可按 fraction 恢复。
+- 书库仍保留历史 `native_progress` 和 `native_annotations` 表，不会删除已有数据。旧文字原型创建的段落批注没有 CFI，当前阅读页无法精确显示它们。
+
+## macOS 打包
 
 ```sh
-ORANGE_READER_DATA_DIR=/tmp/orange-reader-test cargo run
+scripts/package-macos.sh
 ```
 
-## Earlier GPUI text prototype
+脚本生成 `dist/Orange Reader-2.0.0-macos.zip`。解压后可把 `Orange Reader.app` 放进“应用程序”目录。脚本使用 ad hoc 签名完成本机验证；公开分发时仍需要开发者证书签名和 Apple 公证。
+
+## 验证
 
 ```sh
-cargo run -p orange-reader
-```
-
-- GPUI book library with cover images, reading progress, file picker and drag-and-drop EPUB import.
-- A separate native GPUI reading window per opening, with chapter navigation and text pagination.
-- Native text selection, colored highlights, a highlight list and deletion.
-- Persisted font size, font family, line height, paragraph spacing, content width, and light/dark controls.
-- SQLite storage via `rusqlite`; the existing Electron library database and copied books are reused.
-- Existing CFI reading positions resume approximately from their saved fraction. Existing highlights with text are migrated when their text can be matched to a paragraph.
-
-The native EPUB renderer currently extracts text from XHTML. It does not yet reproduce EPUB CSS, inline images, fixed-layout pages, or exact CFI positions. Pagination uses character estimates, so a page may need scrolling. Text selection is limited to one paragraph at a time, and a highlight colors its paragraph. The original Electron reader is still available through `npm run dev` during this transition.
-
-## GPUI Kit + WebView migration build
-
-```sh
-cargo run --manifest-path experiments/gpui-webview/Cargo.toml
-```
-
-This build opens the existing library in GPUI Kit and reads EPUB content with `foliate-js` in a macOS WKWebView. It imports books, displays covers and progress, opens books, and persists CFI reading positions and highlights in the existing SQLite tables. Its GPUI toolbar controls font size, font family, line spacing, letter spacing, paragraph spacing, content width, and theme. The toolbar also opens the contents and highlight panels in the WebView; these panels can navigate chapters, recolor highlights, and delete them. It is now the default `cargo run` entry point. The remaining visual interactions need manual macOS checks.
-
-## Code layout
-
-- `src-native/main.rs`: GPUI book library, reading windows and interaction.
-- `src-native/epub.rs`: EPUB ZIP, package and chapter parsing.
-- `src-native/store.rs`: SQLite data access and legacy data compatibility.
-- `foliate-js/`: EPUB rendering code used by the GPUI Kit migration build and the previous Electron implementation.
-- `src/`: previous Electron implementation.
-
-## Check
-
-```sh
+cargo test
 cargo check
-cargo test --workspace
 ```
+
+打包后可将 `.app` 解压到源码目录之外，使用隔离书库检查打开、目录跳转、进度恢复、高亮操作和设置恢复。
+对隔离书库中已有的书籍，可用 `cargo run -- --book-id 1 --self-test` 执行页内交互自测；终端出现 `self-test-complete` 表示目录跳转、选字工具、高亮创建或改色及删除均已运行。自测会修改该书的阅读位置，因此只应在隔离书库中运行。
+
+## 代码结构
+
+- `src/main.rs`：GPUI 书库与阅读窗口、本地资源服务和阅读数据桥接。
+- `src/reader.html`：WKWebView 中的 foliate-js 阅读交互。
+- `src/epub.rs`：导入时读取 EPUB 元数据和封面。
+- `src/store.rs`：SQLite 书库、进度、高亮与设置。
+- `foliate-js/`：EPUB 排版代码，随应用编译进可执行文件。
+- `scripts/package-macos.sh`：创建 macOS 应用包。

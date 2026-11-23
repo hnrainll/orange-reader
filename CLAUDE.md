@@ -1,18 +1,17 @@
 # Orange Reader 项目说明
 
-当前默认入口为 `experiments/gpui-webview/` 的 GPUI Kit + WKWebView 版本，使用 `cargo run` 启动，复用 `foliate-js/` 渲染 EPUB。`cargo run -p orange-reader` 可运行较早的 GPUI 原生文字原型 `src-native/main.rs`；`src/` 和 npm 配置是迁移前的 Electron 实现。
+仓库是 macOS Rust 应用。`cargo run` 启动 GPUI Kit 书库和 WKWebView 阅读窗口；书页由 `foliate-js/` 渲染。正式入口在 `src/main.rs`，没有 Electron 或 Node.js 运行时。
 
 ## 结构
 
-- `src-native/epub.rs`：读取 EPUB ZIP、OPF、spine 与 XHTML 文本。
-- `src-native/store.rs`：SQLite 书库、阅读进度、标注及旧数据迁移。
-- `src-native/main.rs`：GPUI 书库与阅读窗口。
-- `experiments/gpui-webview/`：GPUI Kit 书库与 WebView 阅读窗口，接入现有 CFI 进度和高亮数据库。
+- `src/main.rs`：书库、阅读窗口、loopback 资源服务、WebView IPC。
+- `src/reader.html`：目录、翻页、选字、高亮与阅读设置的网页端交互。
+- `src/epub.rs`：导入时解析 EPUB 元数据和封面，实际阅读由 foliate-js 负责。
+- `src/store.rs`：兼容旧版 SQLite 书库和阅读数据。
+- `scripts/package-macos.sh`：构建并打包 macOS `.app` 压缩包。
 
-## 数据兼容
+## 开发与验证
 
-原 Electron 书库数据库与复制的 EPUB 文件继续使用。原 CFI 进度通过 fraction 近似定位；有文字内容的旧标注在阅读时按段落文本匹配迁移。`ORANGE_READER_DATA_DIR` 可指定隔离数据目录。
+`cargo test` 运行元数据、数据存储和资源嵌入测试。`cargo check` 检查构建。使用 `ORANGE_READER_DATA_DIR` 指向临时目录进行运行验收，避免触碰现有书库。`scripts/package-macos.sh` 创建可脱离源码目录运行的应用包。
 
-## 当前限制
-
-原生阅读器目前提取 XHTML 文本分页，不执行 EPUB CSS，不显示章节内图片，也不支持固定版式。分页按字符数估算，部分页面仍需滚动。开发时用 `cargo check`、`cargo test` 验证。
+旧 Electron 与 GPUI 文字原型已从源码中清理；历史 `native_progress` 和 `native_annotations` 表仍保留在用户数据库中以防数据丢失。

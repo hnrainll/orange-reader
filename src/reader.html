@@ -18,11 +18,17 @@
   #panel .note { border-bottom: 1px solid #eadfd2; padding: 8px 0; }
   #panel .colors { display: flex; gap: 4px; }
   #panel .colors button { width: 32px; height: 28px; flex: none; }
+  #selection-tools { display: none; position: absolute; z-index: 20; padding: 6px;
+    border: 1px solid #d8c8b7; border-radius: 8px; background: #fffaf3;
+    box-shadow: 0 4px 18px #0003; gap: 5px; }
+  #selection-tools.open { display: flex; }
+  #selection-tools button { width: 28px; height: 28px; padding: 0; }
   foliate-view { display: block; width: 100%; height: 100%; }
   body.dark { color: #f5f5f7; background: #1c1c1e; }
   body.dark header { border-color: #403b37; }
   body.dark button { color: #f5f5f7; background: #302b28; border-color: #5b5148; }
   body.dark #panel { color: #f5f5f7; background: #242426; border-color: #403b37; }
+  body.dark #selection-tools { background: #242426; border-color: #5b5148; }
 </style>
 <header>
   <input id="file" type="file" accept=".epub,application/epub+zip">
@@ -33,6 +39,7 @@
 </header>
 <main id="reader"></main>
 <aside id="panel"></aside>
+<div id="selection-tools"></div>
 <script type="module">
   import '/foliate-js/view.js'
   import { Overlayer } from '/foliate-js/overlayer.js'
@@ -40,8 +47,9 @@
   const status = document.getElementById('status')
   const reader = document.getElementById('reader')
   const panel = document.getElementById('panel')
+  const selectionTools = document.getElementById('selection-tools')
   let panelKind = null
-  const colors = ['#FFE066', '#FF9AA2', '#A8E6CF', '#A0C4FF']
+  const colors = ['#FFE066', '#86EFAC', '#93C5FD', '#F9A8D4', '#FCA5A5']
   let managed = false
   const report = (kind, detail = {}) => {
     const message = JSON.stringify({ kind, managed, ...detail })
@@ -53,6 +61,41 @@
   let lastSelection
   let lastLocation
   let savedAnnotations = []
+  function hideSelectionTools() { selectionTools.classList.remove('open') }
+  function showSelectionTools(doc, range, cfi, text) {
+    lastSelection = { cfi, text }
+    selectionTools.replaceChildren()
+    for (const color of colors) {
+      const button = document.createElement('button')
+      button.style.backgroundColor = color
+      button.title = '高亮文字'
+      button.onmousedown = event => event.preventDefault()
+      button.onclick = () => highlightSelection(color)
+      selectionTools.append(button)
+    }
+    if (savedAnnotations.some(item => item.cfi === cfi)) {
+      const remove = document.createElement('button')
+      remove.textContent = '×'
+      remove.title = '删除高亮'
+      remove.onclick = () => deleteHighlight(cfi)
+      selectionTools.append(remove)
+    }
+    const frame = doc.defaultView?.frameElement
+    const frameRect = frame?.getBoundingClientRect()
+    const rangeRect = range?.getBoundingClientRect()
+    const x = (frameRect?.left || 0) + (rangeRect?.left || 0)
+    const y = (frameRect?.top || 0) + (rangeRect?.top || 0) - 46
+    selectionTools.style.left = `${Math.max(8, Math.min(window.innerWidth - 190, x))}px`
+    selectionTools.style.top = `${Math.max(8, y)}px`
+    selectionTools.classList.add('open')
+  }
+  async function deleteHighlight(cfi) {
+    await view?.deleteAnnotation({ value: cfi })
+    savedAnnotations = savedAnnotations.filter(item => item.cfi !== cfi)
+    report('annotation-delete', { cfi })
+    hideSelectionTools()
+    if (panelKind === 'notes') renderPanel()
+  }
   function closePanel() { panel.classList.remove('open'); panelKind = null }
   function showPanel(kind) {
     if (panelKind === kind) { closePanel(); return }
@@ -102,12 +145,7 @@
         row.append(swatches)
         const remove = document.createElement('button')
         remove.textContent = '删除高亮'
-        remove.onclick = async () => {
-          await view?.deleteAnnotation({ value: annotation.cfi })
-          savedAnnotations = savedAnnotations.filter(item => item.cfi !== annotation.cfi)
-          report('annotation-delete', { cfi: annotation.cfi })
-          renderPanel()
-        }
+        remove.onclick = () => deleteHighlight(annotation.cfi)
         row.append(remove)
         panel.append(row)
       }
@@ -134,6 +172,45 @@
     report('settings-applied', settings)
   }
   window.applyReaderSettings = applySettings
+  async function runSelfTest() {
+    try {
+      const toc = view.book?.toc || []
+      showPanel('toc')
+      const tocCount = panel.querySelectorAll('button').length
+      if (toc.length < 2 || tocCount < 2) throw new Error('目录未载入')
+      await view.goTo(toc[1].href)
+      closePanel()
+
+      const content = view.renderer.getContents().find(item => item.doc?.querySelector('p'))
+      if (!content) throw new Error('章节内容未载入')
+      const paragraph = content.doc.querySelector('p')
+      const textNode = content.doc.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT).nextNode()
+      if (!textNode || !textNode.textContent) throw new Error('无法选取章节文字')
+      const range = content.doc.createRange()
+      range.setStart(textNode, 0)
+      range.setEnd(textNode, Math.min(3, textNode.textContent.length))
+      const cfi = view.getCFI(content.index, range)
+      showSelectionTools(content.doc, range, cfi, range.toString())
+      if (!selectionTools.classList.contains('open')) throw new Error('选字工具未显示')
+      await highlightSelection('#86EFAC')
+      if (savedAnnotations.find(item => item.cfi === cfi)?.color !== '#86EFAC')
+        throw new Error('高亮创建失败')
+
+      showSelectionTools(content.doc, range, cfi, range.toString())
+      await selectionTools.children[2].onclick()
+      if (savedAnnotations.find(item => item.cfi === cfi)?.color !== '#93C5FD')
+        throw new Error('高亮改色失败')
+      showPanel('notes')
+      const remove = panel.querySelector('.note > button:last-child')
+      if (!remove) throw new Error('高亮列表未显示删除按钮')
+      await remove.onclick()
+      if (savedAnnotations.some(item => item.cfi === cfi)) throw new Error('高亮删除失败')
+      closePanel()
+      report('self-test-complete', { tocCount, cfi })
+    } catch (error) {
+      report('self-test-error', { message: String(error) })
+    }
+  }
   async function open(file, session = null) {
     view?.close?.()
     reader.replaceChildren()
@@ -143,8 +220,11 @@
     lastSelection = undefined
     lastLocation = undefined
     managed = session !== null
+    document.getElementById('file').hidden = managed
     savedAnnotations = session?.annotations || []
+    const displayTitle = session?.title || file.name
     closePanel()
+    hideSelectionTools()
     try {
       await view.open(file)
       applySettings(session?.settings || {})
@@ -154,11 +234,13 @@
           { color: annotation.color })
       })
       view.addEventListener('show-annotation', event => {
-        if (savedAnnotations.some(item => item.cfi === event.detail.value)) showPanel('notes')
+        const annotation = savedAnnotations.find(item => item.cfi === event.detail.value)
+        if (annotation) showSelectionTools(event.detail.range.startContainer.ownerDocument,
+          event.detail.range, annotation.cfi, annotation.text || '')
       })
       view.addEventListener('relocate', event => {
-        const { fraction, cfi } = event.detail
-        status.textContent = `${file.name} · ${Math.round((fraction || 0) * 100)}%`
+        const { fraction, cfi, tocItem } = event.detail
+        status.textContent = `${displayTitle}${tocItem?.label ? ` · ${tocItem.label}` : ''} · ${Math.round((fraction || 0) * 100)}%`
         const location = JSON.stringify({ fraction, cfi })
         if (location === lastLocation) return
         lastLocation = location
@@ -172,11 +254,14 @@
         }
         doc.addEventListener('mouseup', () => {
           const selection = doc.getSelection()
-          if (!selection || selection.isCollapsed || !selection.rangeCount) return
+          if (!selection || selection.isCollapsed || !selection.rangeCount) {
+            hideSelectionTools()
+            return
+          }
           const text = selection.toString().trim()
           if (!text) return
           const cfi = view.getCFI(index, selection.getRangeAt(0))
-          lastSelection = { text, cfi }
+          showSelectionTools(doc, selection.getRangeAt(0), cfi, text)
           report('selection', { text, cfi })
         })
         doc.addEventListener('keydown', event => {
@@ -198,6 +283,7 @@
         report('annotations-restored', { count: savedAnnotations.length })
       }
       report('opened', { name: file.name })
+      if (session?.selfTest) await runSelfTest()
       if (panelKind) renderPanel()
     } catch (error) {
       status.textContent = '打开失败：' + error.message
@@ -211,17 +297,24 @@
   })
   document.getElementById('previous').onclick = () => view?.goLeft()
   document.getElementById('next').onclick = () => view?.goRight()
-  async function highlightSelection() {
+  async function highlightSelection(color = '#FFE066') {
     if (!view || !lastSelection?.cfi) {
       report('highlight-error', { message: '请先在书页里选中文字' })
       return
     }
     try {
-      await view.addAnnotation({ value: lastSelection.cfi, color: '#FFE066', type: 'highlight' })
-      if (!savedAnnotations.some(item => item.cfi === lastSelection.cfi)) {
-        savedAnnotations.push({ cfi: lastSelection.cfi, color: '#FFE066', type: 'highlight', text: lastSelection.text })
-        report('highlight', lastSelection)
+      if (!colors.includes(color)) return
+      const existing = savedAnnotations.find(item => item.cfi === lastSelection.cfi)
+      await view.addAnnotation({ value: lastSelection.cfi, color,
+        type: existing?.type || 'highlight' })
+      if (existing) {
+        existing.color = color
+        report('annotation-color', { cfi: existing.cfi, color })
+      } else {
+        savedAnnotations.push({ cfi: lastSelection.cfi, color, type: 'highlight', text: lastSelection.text })
+        report('highlight', { ...lastSelection, color })
       }
+      hideSelectionTools()
       if (panelKind === 'notes') renderPanel()
     } catch (error) {
       report('highlight-error', { message: String(error) })

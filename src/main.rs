@@ -1,18 +1,18 @@
-#[path = "../../../src-native/epub.rs"]
 mod epub;
-#[path = "../../../src-native/store.rs"]
 mod store;
 
 use anyhow::Context as _;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{button::Button, h_flex, v_flex};
 use gpui_kit::*;
 use gpui_webview::WebView;
+use rust_embed::RustEmbed;
 use serde_json::{Value, json};
 use std::{
     env, fs,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
-    path::{Component, Path, PathBuf},
+    path::{Component, PathBuf},
     rc::Rc,
     sync::{
         Arc,
@@ -22,6 +22,22 @@ use std::{
     time::Duration,
 };
 use store::{Book, Store};
+
+#[derive(RustEmbed)]
+#[folder = "foliate-js/"]
+struct FoliateAssets;
+
+#[cfg(test)]
+mod asset_tests {
+    use super::FoliateAssets;
+
+    #[test]
+    fn embeds_epub_renderer() {
+        assert!(FoliateAssets::get("view.js").is_some());
+        assert!(FoliateAssets::get("epub.js").is_some());
+        assert!(FoliateAssets::get("vendor/zip.js").is_some());
+    }
+}
 
 struct ReaderServer {
     url: String,
@@ -82,7 +98,12 @@ impl ReaderSettings {
     }
 }
 
-fn open_stored_book(store: Rc<Store>, book: Book, cx: &mut App) -> anyhow::Result<()> {
+fn open_stored_book(
+    store: Rc<Store>,
+    book: Book,
+    self_test: bool,
+    cx: &mut App,
+) -> anyhow::Result<()> {
     let bytes = fs::read(&book.file_path).with_context(|| format!("无法读取《{}》", book.title))?;
     let progress = store.web_progress(book.id).context("无法读取阅读进度")?;
     let annotations = store.web_annotations(book.id).context("无法读取高亮")?;
@@ -108,7 +129,8 @@ fn open_stored_book(store: Rc<Store>, book: Book, cx: &mut App) -> anyhow::Resul
         }
     });
     let settings = ReaderSettings::load(Some(&store));
-    let session = json!({ "location": location, "annotations": annotations,
+    let session = json!({ "title": book.title, "author": book.author, "selfTest": self_test,
+        "location": location, "annotations": annotations,
         "settings": settings.json() })
     .to_string();
     let server = start_server(Some(bytes), Some(session));
@@ -128,17 +150,20 @@ struct LibraryView {
 
 impl LibraryView {
     fn new(store: Rc<Store>, cx: &mut App) -> Entity<Self> {
-        let books = store.books().unwrap_or_default();
+        let (books, error) = match store.books() {
+            Ok(books) => (books, None),
+            Err(error) => (Vec::new(), Some(format!("读取书库失败：{error}"))),
+        };
         cx.new(|_| Self {
             store,
             books,
-            error: None,
+            error,
             pending_delete: None,
         })
     }
 
     fn open_book(&mut self, book: Book, _: &mut Window, cx: &mut Context<Self>) {
-        if let Err(error) = open_stored_book(self.store.clone(), book, cx) {
+        if let Err(error) = open_stored_book(self.store.clone(), book, false, cx) {
             self.error = Some(error.to_string());
             cx.notify();
         }
@@ -192,6 +217,17 @@ impl LibraryView {
         self.books = self.store.books().unwrap_or_default();
         cx.notify();
     }
+
+    fn refresh_books(&mut self, cx: &mut Context<Self>) {
+        match self.store.books() {
+            Ok(books) => {
+                self.books = books;
+                self.error = None;
+            }
+            Err(error) => self.error = Some(format!("读取书库失败：{error}")),
+        }
+        cx.notify();
+    }
 }
 
 impl Render for LibraryView {
@@ -211,6 +247,11 @@ impl Render for LibraryView {
                         Button::new("import")
                             .label("导入 EPUB")
                             .on_click(cx.listener(Self::choose_files)),
+                    )
+                    .child(
+                        Button::new("refresh")
+                            .label("刷新进度")
+                            .on_click(cx.listener(|this, _, _, cx| this.refresh_books(cx))),
                     ),
             )
             .child(self.error.clone().unwrap_or_default())
@@ -222,8 +263,10 @@ impl Render for LibraryView {
             .child(
                 div()
                     .flex()
+                    .flex_1()
                     .flex_wrap()
                     .gap_4()
+                    .overflow_y_scrollbar()
                     .children(self.books.iter().cloned().map(|book| {
                         let open_book = book.clone();
                         let id = book.id;
@@ -342,9 +385,23 @@ impl Spike {
                                 .get("text")
                                 .and_then(Value::as_str)
                                 .filter(|text| !text.is_empty() && text.len() < 16384);
-                            match (cfi, text) {
-                                (Some(cfi), Some(text)) => store
-                                    .add_web_annotation(*book_id, cfi, "#FFE066", text)
+                            let color =
+                                message
+                                    .get("color")
+                                    .and_then(Value::as_str)
+                                    .filter(|color| {
+                                        matches!(
+                                            *color,
+                                            "#FFE066"
+                                                | "#86EFAC"
+                                                | "#93C5FD"
+                                                | "#F9A8D4"
+                                                | "#FCA5A5"
+                                        )
+                                    });
+                            match (cfi, text, color) {
+                                (Some(cfi), Some(text), Some(color)) => store
+                                    .add_web_annotation(*book_id, cfi, color, text)
                                     .map(|_| ()),
                                 _ => return,
                             }
@@ -357,7 +414,11 @@ impl Spike {
                                     .filter(|color| {
                                         matches!(
                                             *color,
-                                            "#FFE066" | "#FF9AA2" | "#A8E6CF" | "#A0C4FF"
+                                            "#FFE066"
+                                                | "#86EFAC"
+                                                | "#93C5FD"
+                                                | "#F9A8D4"
+                                                | "#FCA5A5"
                                         )
                                     });
                             match (cfi, color) {
@@ -481,6 +542,7 @@ impl Render for Spike {
                 h_flex()
                     .p_2()
                     .gap_2()
+                    .flex_wrap()
                     .child(
                         Button::new("previous")
                             .label("GPUI 上一页")
@@ -529,6 +591,7 @@ impl Render for Spike {
                 h_flex()
                     .p_2()
                     .gap_2()
+                    .flex_wrap()
                     .child(Button::new("line-smaller").label("行距−").on_click(
                         cx.listener(|this, _, _, cx| this.update_settings("line-smaller", cx)),
                     ))
@@ -548,6 +611,7 @@ impl Render for Spike {
                 h_flex()
                     .p_2()
                     .gap_2()
+                    .flex_wrap()
                     .child(
                         Button::new("font-family")
                             .label(format!("字体：{}", self.settings.font_family))
@@ -574,12 +638,7 @@ impl Render for Spike {
     }
 }
 
-fn serve(
-    mut stream: TcpStream,
-    foliate_dir: &Path,
-    book: Option<&[u8]>,
-    session: Option<&str>,
-) -> std::io::Result<()> {
+fn serve(mut stream: TcpStream, book: Option<&[u8]>, session: Option<&str>) -> std::io::Result<()> {
     stream.set_read_timeout(Some(std::time::Duration::from_secs(2)))?;
     let mut request = [0u8; 8192];
     let length = stream.read(&mut request)?;
@@ -597,7 +656,7 @@ fn serve(
         (
             "200 OK",
             "text/html; charset=utf-8",
-            include_bytes!("../reader.html").to_vec(),
+            include_bytes!("reader.html").to_vec(),
         )
     } else if path == "/book.epub" {
         match book {
@@ -615,8 +674,8 @@ fn serve(
             .components()
             .all(|part| matches!(part, Component::Normal(_)))
         {
-            match fs::read(foliate_dir.join(&relative)) {
-                Ok(bytes) => {
+            match relative.to_str().and_then(FoliateAssets::get) {
+                Some(asset) => {
                     let mime = match relative.extension().and_then(|ext| ext.to_str()) {
                         Some("js") => "text/javascript; charset=utf-8",
                         Some("css") => "text/css; charset=utf-8",
@@ -624,9 +683,9 @@ fn serve(
                         Some("html") => "text/html; charset=utf-8",
                         _ => "application/octet-stream",
                     };
-                    ("200 OK", mime, bytes)
+                    ("200 OK", mime, asset.data.into_owned())
                 }
-                Err(_) => ("404 Not Found", "text/plain", Vec::new()),
+                None => ("404 Not Found", "text/plain", Vec::new()),
             }
         } else {
             ("403 Forbidden", "text/plain", Vec::new())
@@ -644,7 +703,6 @@ fn serve(
 }
 
 fn start_server(book: Option<Vec<u8>>, session: Option<String>) -> ReaderServer {
-    let foliate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../foliate-js");
     let listener = TcpListener::bind("127.0.0.1:0").expect("无法启动本地阅读页服务器");
     listener
         .set_nonblocking(true)
@@ -662,9 +720,7 @@ fn start_server(book: Option<Vec<u8>>, session: Option<String>) -> ReaderServer 
                         eprintln!("无法配置资源连接：{error}");
                         continue;
                     }
-                    if let Err(error) =
-                        serve(stream, &foliate_dir, book.as_deref(), session.as_deref())
-                    {
+                    if let Err(error) = serve(stream, book.as_deref(), session.as_deref()) {
                         eprintln!("资源请求失败：{error}");
                     }
                 }
@@ -695,6 +751,7 @@ fn main() {
     } else {
         None
     };
+    let self_test = args.any(|arg| arg == std::ffi::OsStr::new("--self-test"));
     let book_path = if stored_id.is_none() {
         first_arg.map(PathBuf::from)
     } else {
@@ -726,7 +783,7 @@ fn main() {
                     .into_iter()
                     .find(|book| book.id == id)
                     .expect("书籍 ID 不存在");
-                open_stored_book(store.clone(), book, cx).expect("无法打开书库中的书籍");
+                open_stored_book(store.clone(), book, self_test, cx).expect("无法打开书库中的书籍");
             } else if let Some(store) = &store {
                 gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
                     LibraryView::new(store.clone(), cx)
