@@ -146,9 +146,16 @@ fn refresh_history(cx: &mut App) {
     }
 }
 
+fn schedule_refresh_history(cx: &mut App) {
+    cx.defer(refresh_history);
+}
+
 fn open_or_focus_history_window(cx: &mut App) {
     if let Some((handle, weak)) = cx.global::<AppState>().history_window.clone() {
-        let focused = handle.update(cx, |_, window, _| window.activate_window()).is_ok();
+        let focused = cx.windows().contains(&handle)
+            && handle
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok();
         if focused {
             if let Some(view) = weak.upgrade() {
                 view.update(cx, |history, cx| history.reload(cx));
@@ -184,10 +191,12 @@ fn open_reader_for_entry(
     cx: &mut App,
 ) -> anyhow::Result<()> {
     if let Some(existing_handle) = cx.global::<AppState>().open_books.get(&entry.id).copied() {
-        if existing_handle
-            .update(cx, |_, window, _| window.activate_window())
-            .is_ok()
+        if cx.windows().contains(&existing_handle)
+            && existing_handle
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
         {
+            schedule_refresh_history(cx);
             return Ok(());
         }
         cx.global_mut::<AppState>().open_books.remove(&entry.id);
@@ -239,7 +248,7 @@ fn open_reader_for_entry(
         ReaderWindow::new(window, cx, server, store, book_id, settings)
     })?;
     cx.global_mut::<AppState>().open_books.insert(book_id, handle);
-    refresh_history(cx);
+    schedule_refresh_history(cx);
     Ok(())
 }
 
@@ -264,17 +273,19 @@ fn open_epub_paths(paths: Vec<PathBuf>, self_test: bool, cx: &mut App) {
     }
     if !errors.is_empty() {
         let message = errors.join("\n");
-        if let Some(view) = cx
-            .global::<AppState>()
-            .history_window
-            .as_ref()
-            .and_then(|(_, weak)| weak.upgrade())
-        {
-            view.update(cx, |history, cx| history.set_error(Some(message), cx));
-        } else {
-            cx.global_mut::<AppState>().last_error = Some(message);
-            open_or_focus_history_window(cx);
-        }
+        cx.defer(move |cx| {
+            if let Some(view) = cx
+                .global::<AppState>()
+                .history_window
+                .as_ref()
+                .and_then(|(_, weak)| weak.upgrade())
+            {
+                view.update(cx, |history, cx| history.set_error(Some(message), cx));
+            } else {
+                cx.global_mut::<AppState>().last_error = Some(message);
+                open_or_focus_history_window(cx);
+            }
+        });
     }
 }
 
@@ -329,13 +340,16 @@ impl HistoryView {
 
     fn open_entry(&mut self, entry: HistoryEntry, cx: &mut Context<Self>) {
         self.error = None;
-        if let Err(error) = open_epub_path(entry.file_path, false, cx) {
-            self.error = Some(error.to_string());
-        }
-        self.reload(cx);
+        cx.notify();
+        let path = entry.file_path;
+        let app: &mut App = cx;
+        app.defer(move |cx| {
+            open_epub_paths(vec![path], false, cx);
+        });
     }
 
     fn relocate_entry(&mut self, id: i64, cx: &mut Context<Self>) {
+        let store = self.store.clone();
         let result = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -349,20 +363,24 @@ impl HistoryView {
             let Some(path) = paths.into_iter().find(|p| is_epub_path(p)) else {
                 return;
             };
-            let _ = view.update(cx, |this, cx| {
-                let outcome = fs::read(&path)
-                    .with_context(|| format!("无法读取 {}", path.display()))
-                    .and_then(|bytes| {
-                        let parsed = epub::parse(&path)
-                            .with_context(|| format!("无法解析 {}", path.display()))?;
-                        let entry = this.store.relocate_entry(id, &path, &bytes, &parsed)?;
-                        open_reader_for_entry(entry, bytes, false, cx)
+            let prepared = fs::read(&path)
+                .with_context(|| format!("无法读取 {}", path.display()))
+                .and_then(|bytes| {
+                    let parsed = epub::parse(&path)
+                        .with_context(|| format!("无法解析 {}", path.display()))?;
+                    let entry = store.relocate_entry(id, &path, &bytes, &parsed)?;
+                    Ok((entry, bytes))
+                });
+            let _ = cx.update(|cx| {
+                let outcome = prepared.and_then(|(entry, bytes)| {
+                    open_reader_for_entry(entry, bytes, false, cx)
+                });
+                if let Some(view) = view.upgrade() {
+                    view.update(cx, |this, cx| {
+                        this.error = outcome.err().map(|e| e.to_string());
+                        this.reload(cx);
                     });
-                match outcome {
-                    Ok(()) => this.error = None,
-                    Err(error) => this.error = Some(error.to_string()),
                 }
-                this.reload(cx);
             });
         })
         .detach();
@@ -384,9 +402,10 @@ impl Render for HistoryView {
             .size_full()
             .p_5()
             .gap_4()
-            .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
-                open_epub_paths(paths.paths().to_vec(), false, cx);
-            }))
+            .on_drop(|paths: &ExternalPaths, _, cx| {
+                let paths = paths.paths().to_vec();
+                cx.defer(move |cx| open_epub_paths(paths, false, cx));
+            })
             .child(
                 h_flex()
                     .justify_between()
@@ -794,9 +813,10 @@ impl Render for ReaderWindow {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
-            .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
-                open_epub_paths(paths.paths().to_vec(), false, cx);
-            }))
+            .on_drop(|paths: &ExternalPaths, _, cx| {
+                let paths = paths.paths().to_vec();
+                cx.defer(move |cx| open_epub_paths(paths, false, cx));
+            })
             .child(
                 h_flex()
                     .px_3()
@@ -812,7 +832,7 @@ impl Render for ReaderWindow {
                     .child(
                         Button::new("history")
                             .label("最近阅读")
-                            .on_click(|_, _, cx| open_or_focus_history_window(cx)),
+                            .on_click(|_, _, cx| cx.defer(open_or_focus_history_window)),
                     )
                     .child(
                         Button::new("previous")
@@ -1008,11 +1028,13 @@ fn configure_menus(cx: &mut App) {
         KeyBinding::new("cmd-q", QuitApp, None),
     ]);
     cx.on_action(|_: &OpenFile, cx| prompt_open_epubs(cx));
-    cx.on_action(|_: &ShowHistory, cx| open_or_focus_history_window(cx));
+    cx.on_action(|_: &ShowHistory, cx| cx.defer(open_or_focus_history_window));
     cx.on_action(|_: &CloseWindow, cx| {
-        if let Some(window) = cx.active_window() {
-            let _ = window.update(cx, |_, window, _| window.remove_window());
-        }
+        cx.defer(|cx| {
+            if let Some(window) = cx.active_window() {
+                let _ = window.update(cx, |_, window, _| window.remove_window());
+            }
+        });
     });
     cx.on_action(|_: &QuitApp, cx| cx.quit());
     cx.set_menus(vec![
