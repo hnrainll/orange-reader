@@ -1,5 +1,3 @@
-node_modules/
-out/
 dist/
 *.db
 *.db-wal
