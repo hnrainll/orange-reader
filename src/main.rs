@@ -4,15 +4,19 @@ mod store;
 use anyhow::Context as _;
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{button::Button, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use gpui_webview::WebView;
+use percent_encoding::percent_decode_str;
 use rust_embed::RustEmbed;
 use serde_json::{Value, json};
 use std::{
+    cell::RefCell,
+    collections::HashMap,
     env, fs,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
-    path::{Component, PathBuf},
+    path::{Component, Path, PathBuf},
     rc::Rc,
     sync::{
         Arc,
@@ -21,22 +25,47 @@ use std::{
     thread,
     time::Duration,
 };
-use store::{Book, Store};
+use store::{HistoryEntry, Store};
+
+actions!(orange_reader, [OpenFile, ShowHistory, CloseWindow, QuitApp]);
 
 #[derive(RustEmbed)]
 #[folder = "foliate-js/"]
 struct FoliateAssets;
 
-#[cfg(test)]
-mod asset_tests {
-    use super::FoliateAssets;
+struct AppState {
+    store: Rc<Store>,
+    history_window: Option<(AnyWindowHandle, WeakEntity<HistoryView>)>,
+    open_books: HashMap<i64, AnyWindowHandle>,
+    last_error: Option<String>,
+}
 
-    #[test]
-    fn embeds_epub_renderer() {
-        assert!(FoliateAssets::get("view.js").is_some());
-        assert!(FoliateAssets::get("epub.js").is_some());
-        assert!(FoliateAssets::get("vendor/zip.js").is_some());
+impl Global for AppState {}
+
+fn is_epub_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("epub"))
+}
+
+fn file_url_to_path(raw: &str) -> Option<PathBuf> {
+    let path = if let Some(rest) = raw.strip_prefix("file://") {
+        let without_host = rest.strip_prefix("localhost").unwrap_or(rest);
+        let decoded = percent_decode_str(without_host).decode_utf8_lossy();
+        PathBuf::from(decoded.into_owned())
+    } else {
+        PathBuf::from(raw)
+    };
+    is_epub_path(&path).then_some(path)
+}
+
+fn display_path(path: &Path) -> String {
+    if let Some(home) = dirs::home_dir() {
+        if let Ok(relative) = path.strip_prefix(&home) {
+            return format!("~/{}", relative.display());
+        }
     }
+    path.display().to_string()
 }
 
 struct ReaderServer {
@@ -62,10 +91,10 @@ struct ReaderSettings {
 }
 
 impl ReaderSettings {
-    fn load(store: Option<&Store>) -> Self {
+    fn load(store: &Store) -> Self {
         let number = |key: &str, default: f32, min: f32, max: f32| {
             store
-                .and_then(|store| store.setting(key))
+                .setting(key)
                 .and_then(|value| value.parse::<f32>().ok())
                 .filter(|value| value.is_finite())
                 .unwrap_or(default)
@@ -75,13 +104,21 @@ impl ReaderSettings {
             font_size: number("font_size", 18.0, 12.0, 32.0),
             line_height: number("line_height", 1.6, 1.0, 2.4),
             content_width: number("content_width", 720.0, 480.0, 960.0),
-            letter_spacing: number("web_letter_spacing", 0.0, 0.0, 0.1),
+            letter_spacing: number("letter_spacing", 0.0, 0.0, 0.1),
             paragraph_spacing: number("paragraph_spacing", 1.0, 0.5, 2.5),
             font_family: store
-                .and_then(|store| store.setting("web_font_family"))
+                .setting("font_family")
                 .filter(|family| matches!(family.as_str(), "original" | "serif" | "sans-serif"))
                 .unwrap_or_else(|| "original".to_owned()),
-            dark: store.and_then(|store| store.setting("theme")).as_deref() == Some("dark"),
+            dark: store.setting("theme").as_deref() == Some("dark"),
+        }
+    }
+
+    fn font_family_label(&self) -> &'static str {
+        match self.font_family.as_str() {
+            "serif" => "字体：衬线",
+            "sans-serif" => "字体：无衬线",
+            _ => "字体：原版",
         }
     }
 
@@ -98,16 +135,68 @@ impl ReaderSettings {
     }
 }
 
-fn open_stored_book(
-    store: Rc<Store>,
-    book: Book,
+fn refresh_history(cx: &mut App) {
+    let target = cx
+        .global::<AppState>()
+        .history_window
+        .as_ref()
+        .and_then(|(_, weak)| weak.upgrade());
+    if let Some(view) = target {
+        view.update(cx, |history, cx| history.reload(cx));
+    }
+}
+
+fn open_or_focus_history_window(cx: &mut App) {
+    if let Some((handle, weak)) = cx.global::<AppState>().history_window.clone() {
+        let focused = handle.update(cx, |_, window, _| window.activate_window()).is_ok();
+        if focused {
+            if let Some(view) = weak.upgrade() {
+                view.update(cx, |history, cx| history.reload(cx));
+            }
+            return;
+        }
+        cx.global_mut::<AppState>().history_window = None;
+    }
+
+    let store = cx.global::<AppState>().store.clone();
+    let error = cx.global_mut::<AppState>().last_error.take();
+    let options = WindowOptions {
+        titlebar: Some(TitlebarOptions {
+            title: Some("Orange Reader · 最近阅读".into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    match gpui_kit::open_window(options, cx, move |_, cx| {
+        HistoryView::new(store, error, cx)
+    }) {
+        Ok((handle, entity)) => {
+            cx.global_mut::<AppState>().history_window = Some((handle, entity.downgrade()));
+        }
+        Err(error) => eprintln!("无法打开最近阅读窗口：{error}"),
+    }
+}
+
+fn open_reader_for_entry(
+    entry: HistoryEntry,
+    bytes: Vec<u8>,
     self_test: bool,
     cx: &mut App,
 ) -> anyhow::Result<()> {
-    let bytes = fs::read(&book.file_path).with_context(|| format!("无法读取《{}》", book.title))?;
-    let progress = store.web_progress(book.id).context("无法读取阅读进度")?;
-    let annotations = store.web_annotations(book.id).context("无法读取高亮")?;
-    let annotations: Vec<Value> = annotations
+    if let Some(existing_handle) = cx.global::<AppState>().open_books.get(&entry.id).copied() {
+        if existing_handle
+            .update(cx, |_, window, _| window.activate_window())
+            .is_ok()
+        {
+            return Ok(());
+        }
+        cx.global_mut::<AppState>().open_books.remove(&entry.id);
+    }
+
+    let store = cx.global::<AppState>().store.clone();
+    let annotations: Vec<Value> = store
+        .annotations(entry.id)
+        .context("无法读取高亮")?
         .into_iter()
         .map(|annotation| {
             json!({
@@ -119,229 +208,391 @@ fn open_stored_book(
             })
         })
         .collect();
-    let location = progress.and_then(|(cfi, fraction)| {
-        if cfi.starts_with("epubcfi(") {
-            Some(json!(cfi))
-        } else if fraction.is_finite() && (0.0..=1.0).contains(&fraction) {
-            Some(json!({ "fraction": fraction }))
-        } else {
-            None
+    let location = match entry.cfi.as_deref() {
+        Some(cfi) if cfi.starts_with("epubcfi(") => Some(json!(cfi)),
+        _ if entry.fraction.is_finite() && entry.fraction > 0.0 && entry.fraction <= 1.0 => {
+            Some(json!({ "fraction": entry.fraction }))
         }
-    });
-    let settings = ReaderSettings::load(Some(&store));
-    let session = json!({ "title": book.title, "author": book.author, "selfTest": self_test,
-        "location": location, "annotations": annotations,
-        "settings": settings.json() })
+        _ => None,
+    };
+    let settings = ReaderSettings::load(&store);
+    let session = json!({
+        "title": entry.title,
+        "author": entry.author,
+        "selfTest": self_test,
+        "location": location,
+        "annotations": annotations,
+        "settings": settings.json(),
+    })
     .to_string();
     let server = start_server(Some(bytes), Some(session));
-    let persistence = Some((store, book.id));
-    gpui_kit::open_window(WindowOptions::default(), cx, move |window, cx| {
-        Spike::new(window, cx, server, persistence, settings)
+    let title = entry.title.clone();
+    let book_id = entry.id;
+    let options = WindowOptions {
+        titlebar: Some(TitlebarOptions {
+            title: Some(title.into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let (handle, _) = gpui_kit::open_window(options, cx, move |window, cx| {
+        ReaderWindow::new(window, cx, server, store, book_id, settings)
     })?;
+    cx.global_mut::<AppState>().open_books.insert(book_id, handle);
+    refresh_history(cx);
     Ok(())
 }
 
-struct LibraryView {
-    store: Rc<Store>,
-    books: Vec<Book>,
-    error: Option<String>,
-    pending_delete: Option<i64>,
+fn open_epub_path(path: PathBuf, self_test: bool, cx: &mut App) -> anyhow::Result<()> {
+    let bytes = fs::read(&path).with_context(|| format!("无法读取 {}", path.display()))?;
+    let parsed = epub::parse(&path).with_context(|| format!("无法解析 {}", path.display()))?;
+    let store = cx.global::<AppState>().store.clone();
+    let entry = store.record_open(&path, &bytes, &parsed)?;
+    open_reader_for_entry(entry, bytes, self_test, cx)
 }
 
-impl LibraryView {
-    fn new(store: Rc<Store>, cx: &mut App) -> Entity<Self> {
-        let (books, error) = match store.books() {
-            Ok(books) => (books, None),
-            Err(error) => (Vec::new(), Some(format!("读取书库失败：{error}"))),
+fn open_epub_paths(paths: Vec<PathBuf>, self_test: bool, cx: &mut App) {
+    let mut errors = Vec::new();
+    for path in paths {
+        if !is_epub_path(&path) {
+            continue;
+        }
+        if let Err(error) = open_epub_path(path, self_test, cx) {
+            eprintln!("打开 EPUB 失败：{error}");
+            errors.push(error.to_string());
+        }
+    }
+    if !errors.is_empty() {
+        let message = errors.join("\n");
+        if let Some(view) = cx
+            .global::<AppState>()
+            .history_window
+            .as_ref()
+            .and_then(|(_, weak)| weak.upgrade())
+        {
+            view.update(cx, |history, cx| history.set_error(Some(message), cx));
+        } else {
+            cx.global_mut::<AppState>().last_error = Some(message);
+            open_or_focus_history_window(cx);
+        }
+    }
+}
+
+fn prompt_open_epubs(cx: &mut App) {
+    let result = cx.prompt_for_paths(PathPromptOptions {
+        files: true,
+        directories: false,
+        multiple: true,
+        prompt: Some("打开 EPUB".into()),
+    });
+    cx.spawn(async move |cx| {
+        if let Ok(Ok(Some(paths))) = result.await {
+            let _ = cx.update(|cx| open_epub_paths(paths, false, cx));
+        }
+    })
+    .detach();
+}
+
+struct HistoryView {
+    store: Rc<Store>,
+    entries: Vec<HistoryEntry>,
+    error: Option<String>,
+}
+
+impl HistoryView {
+    fn new(store: Rc<Store>, initial_error: Option<String>, cx: &mut App) -> Entity<Self> {
+        let (entries, load_error) = match store.history() {
+            Ok(entries) => (entries, None),
+            Err(error) => (Vec::new(), Some(format!("读取历史记录失败：{error}"))),
         };
         cx.new(|_| Self {
             store,
-            books,
-            error,
-            pending_delete: None,
+            entries,
+            error: initial_error.or(load_error),
         })
     }
 
-    fn open_book(&mut self, book: Book, _: &mut Window, cx: &mut Context<Self>) {
-        if let Err(error) = open_stored_book(self.store.clone(), book, false, cx) {
-            self.error = Some(error.to_string());
-            cx.notify();
-        }
-    }
-
-    fn import_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
-        let mut errors = Vec::new();
-        for path in paths {
-            if !path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("epub"))
-            {
-                continue;
+    fn reload(&mut self, cx: &mut Context<Self>) {
+        match self.store.history() {
+            Ok(entries) => {
+                self.entries = entries;
             }
-            match epub::parse(&path).and_then(|epub| self.store.import(&path, &epub)) {
-                Ok(()) => {}
-                Err(error) => errors.push(format!("{}: {error}", path.display())),
-            }
+            Err(error) => self.error = Some(format!("读取历史记录失败：{error}")),
         }
-        self.books = self.store.books().unwrap_or_default();
-        self.error = (!errors.is_empty()).then(|| errors.join("\n"));
         cx.notify();
     }
 
-    fn choose_files(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn set_error(&mut self, error: Option<String>, cx: &mut Context<Self>) {
+        self.error = error;
+        cx.notify();
+    }
+
+    fn open_entry(&mut self, entry: HistoryEntry, cx: &mut Context<Self>) {
+        self.error = None;
+        if let Err(error) = open_epub_path(entry.file_path, false, cx) {
+            self.error = Some(error.to_string());
+        }
+        self.reload(cx);
+    }
+
+    fn relocate_entry(&mut self, id: i64, cx: &mut Context<Self>) {
         let result = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
-            multiple: true,
-            prompt: Some("导入 EPUB".into()),
+            multiple: false,
+            prompt: Some("重新定位 EPUB".into()),
         });
         cx.spawn(async move |view, cx| {
-            if let Ok(Ok(Some(paths))) = result.await {
-                let _ = view.update(cx, |library, cx| library.import_paths(paths, cx));
-            }
+            let Ok(Ok(Some(paths))) = result.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().find(|p| is_epub_path(p)) else {
+                return;
+            };
+            let _ = view.update(cx, |this, cx| {
+                let outcome = fs::read(&path)
+                    .with_context(|| format!("无法读取 {}", path.display()))
+                    .and_then(|bytes| {
+                        let parsed = epub::parse(&path)
+                            .with_context(|| format!("无法解析 {}", path.display()))?;
+                        let entry = this.store.relocate_entry(id, &path, &bytes, &parsed)?;
+                        open_reader_for_entry(entry, bytes, false, cx)
+                    });
+                match outcome {
+                    Ok(()) => this.error = None,
+                    Err(error) => this.error = Some(error.to_string()),
+                }
+                this.reload(cx);
+            });
         })
         .detach();
     }
 
-    fn delete_book(&mut self, id: i64, cx: &mut Context<Self>) {
-        if self.pending_delete != Some(id) {
-            self.pending_delete = Some(id);
-            cx.notify();
-            return;
+    fn remove_entry(&mut self, id: i64, cx: &mut Context<Self>) {
+        if let Err(error) = self.store.remove_history(id) {
+            self.error = Some(format!("移出历史失败：{error}"));
+        } else {
+            self.error = None;
         }
-        self.pending_delete = None;
-        if let Err(error) = self.store.delete(id) {
-            self.error = Some(format!("删除书籍失败：{error}"));
-        }
-        self.books = self.store.books().unwrap_or_default();
-        cx.notify();
-    }
-
-    fn refresh_books(&mut self, cx: &mut Context<Self>) {
-        match self.store.books() {
-            Ok(books) => {
-                self.books = books;
-                self.error = None;
-            }
-            Err(error) => self.error = Some(format!("读取书库失败：{error}")),
-        }
-        cx.notify();
+        self.reload(cx);
     }
 }
 
-impl Render for LibraryView {
+impl Render for HistoryView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
-            .p_4()
-            .gap_3()
-            .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
-                this.import_paths(paths.paths().to_vec(), cx);
+            .p_5()
+            .gap_4()
+            .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
+                open_epub_paths(paths.paths().to_vec(), false, cx);
             }))
             .child(
                 h_flex()
+                    .justify_between()
+                    .items_center()
                     .gap_3()
-                    .child("Orange Reader · 书库")
                     .child(
-                        Button::new("import")
-                            .label("导入 EPUB")
-                            .on_click(cx.listener(Self::choose_files)),
+                        v_flex()
+                            .gap_1()
+                            .child(div().text_lg().child("Orange Reader · 最近阅读"))
+                            .child(div().text_sm().text_color(rgb(0x74685c)).child(
+                                if self.entries.is_empty() {
+                                    "直接打开磁盘上的 EPUB 阅读，不拷贝也不管理你的文件".to_owned()
+                                } else {
+                                    format!("共 {} 条阅读记录 · 支持拖入 EPUB 直接阅读", self.entries.len())
+                                },
+                            )),
                     )
                     .child(
-                        Button::new("refresh")
-                            .label("刷新进度")
-                            .on_click(cx.listener(|this, _, _, cx| this.refresh_books(cx))),
+                        Button::new("open-epub")
+                            .label("打开 EPUB…")
+                            .on_click(|_, _, cx| prompt_open_epubs(cx)),
                     ),
             )
-            .child(self.error.clone().unwrap_or_default())
-            .child(if self.books.is_empty() {
-                "书库为空。点击“导入 EPUB”添加书籍。".to_owned()
-            } else {
-                format!("{} 本书", self.books.len())
+            .when_some(self.error.clone(), |this, error| {
+                this.child(
+                    h_flex()
+                        .p_2()
+                        .gap_2()
+                        .rounded_md()
+                        .bg(rgb(0xfee2e2))
+                        .text_color(rgb(0x991b1b))
+                        .justify_between()
+                        .items_center()
+                        .child(error)
+                        .child(Button::new("dismiss-error").label("关闭").on_click(
+                            cx.listener(|this, _, _, cx| this.set_error(None, cx)),
+                        )),
+                )
             })
-            .child(
-                div()
-                    .flex()
+            .child(if self.entries.is_empty() {
+                v_flex()
                     .flex_1()
-                    .flex_wrap()
-                    .gap_4()
+                    .items_center()
+                    .justify_center()
+                    .gap_2()
+                    .text_color(rgb(0x74685c))
+                    .child("还没有阅读记录")
+                    .child("点击右上角“打开 EPUB…”（⌘O），或直接将 .epub 文件拖入此窗口")
+                    .into_any_element()
+            } else {
+                v_flex()
+                    .flex_1()
+                    .gap_3()
                     .overflow_y_scrollbar()
-                    .children(self.books.iter().cloned().map(|book| {
-                        let open_book = book.clone();
-                        let id = book.id;
-                        div()
-                            .id(("book", id as usize))
-                            .w(px(190.))
-                            .p_2()
+                    .children(self.entries.iter().cloned().map(|entry| {
+                        let id = entry.id;
+                        let exists = entry.file_path.exists();
+                        let open_target = entry.clone();
+                        let reveal_path = entry.file_path.clone();
+                        let percent = (entry.fraction * 100.0).round() as u32;
+                        let progress_text = match entry.chapter_title.as_deref() {
+                            Some(chapter) if !chapter.is_empty() => {
+                                format!("{chapter} · 已读 {percent}%")
+                            }
+                            _ if entry.cfi.is_some() || percent > 0 => {
+                                format!("已读 {percent}%")
+                            }
+                            _ => "尚未开始阅读".to_owned(),
+                        };
+                        let location_text = if exists {
+                            display_path(&entry.file_path)
+                        } else {
+                            format!("{}（文件已移动或删除）", display_path(&entry.file_path))
+                        };
+
+                        h_flex()
+                            .id(("history", id as usize))
+                            .p_3()
+                            .gap_3()
                             .border_1()
                             .rounded_md()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(if let Some(path) = book.cover_path.clone() {
+                            .items_center()
+                            .child(if let Some(path) = entry.cover_path.clone().filter(|p| p.exists()) {
                                 div()
-                                    .h(px(240.))
+                                    .w(px(52.))
+                                    .h(px(72.))
+                                    .flex_shrink_0()
+                                    .rounded_sm()
                                     .overflow_hidden()
                                     .child(img(path).size_full())
                                     .into_any_element()
                             } else {
                                 div()
-                                    .h(px(240.))
+                                    .w(px(52.))
+                                    .h(px(72.))
+                                    .flex_shrink_0()
+                                    .rounded_sm()
                                     .bg(rgb(0xe9b48b))
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .child(book.title.chars().next().unwrap_or(' ').to_string())
+                                    .child(entry.title.chars().next().unwrap_or('书').to_string())
                                     .into_any_element()
                             })
-                            .child(book.title)
-                            .child(book.author)
-                            .child(format!("已读 {}%", (book.fraction * 100.0).round() as u32))
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .gap_1()
+                                    .overflow_hidden()
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .items_center()
+                                            .child(entry.title.clone())
+                                            .when(!entry.author.is_empty(), |row| {
+                                                row.child(
+                                                    div()
+                                                        .text_sm()
+                                                        .text_color(rgb(0x74685c))
+                                                        .child(entry.author.clone()),
+                                                )
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(if exists {
+                                                rgb(0x57534e)
+                                            } else {
+                                                rgb(0xb45309)
+                                            })
+                                            .child(location_text),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(rgb(0x78716c))
+                                            .child(format!(
+                                                "{progress_text} · 上次阅读 {}",
+                                                entry.last_opened_at
+                                            )),
+                                    ),
+                            )
                             .child(
                                 h_flex()
                                     .gap_2()
+                                    .flex_shrink_0()
+                                    .when(exists, |actions| {
+                                        actions
+                                            .child(
+                                                Button::new(("continue", id as usize))
+                                                    .label("继续阅读")
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.open_entry(open_target.clone(), cx)
+                                                    })),
+                                            )
+                                            .child(
+                                                Button::new(("reveal", id as usize))
+                                                    .label("显示位置")
+                                                    .on_click(move |_, _, cx| {
+                                                        cx.reveal_path(&reveal_path);
+                                                    }),
+                                            )
+                                    })
+                                    .when(!exists, |actions| {
+                                        actions.child(
+                                            Button::new(("relocate", id as usize))
+                                                .label("重新定位")
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.relocate_entry(id, cx)
+                                                })),
+                                        )
+                                    })
                                     .child(
-                                        Button::new(("open", id as usize)).label("阅读").on_click(
-                                            cx.listener(move |this, _, window, cx| {
-                                                this.open_book(open_book.clone(), window, cx)
-                                            }),
-                                        ),
-                                    )
-                                    .child(
-                                        Button::new(("delete", id as usize))
-                                            .label(if self.pending_delete == Some(id) {
-                                                "确认删除"
-                                            } else {
-                                                "删除"
-                                            })
+                                        Button::new(("remove", id as usize))
+                                            .label("移出历史")
                                             .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.delete_book(id, cx)
+                                                this.remove_entry(id, cx)
                                             })),
                                     ),
                             )
-                    })),
-            )
+                    }))
+                    .into_any_element()
+            })
     }
 }
 
-struct Spike {
+struct ReaderWindow {
     webview: Entity<WebView>,
     _server: ReaderServer,
     settings: ReaderSettings,
-    settings_store: Option<Rc<Store>>,
+    store: Rc<Store>,
 }
 
-impl Spike {
+impl ReaderWindow {
     fn new(
         window: &mut Window,
         cx: &mut App,
         server: ReaderServer,
-        persistence: Option<(Rc<Store>, i64)>,
+        store: Rc<Store>,
+        book_id: i64,
         settings: ReaderSettings,
     ) -> Entity<Self> {
         let url = server.url.clone();
-        let settings_store = persistence.as_ref().map(|(store, _)| store.clone());
+        let ipc_store = store.clone();
+        let async_app = cx.to_async();
         let webview = cx.new(|cx| {
             let allowed_url = url.clone();
             let allowed_blob_url = format!("blob:{allowed_url}");
@@ -355,9 +606,6 @@ impl Spike {
                 .with_ipc_handler(move |request| {
                     let body = request.body();
                     eprintln!("[foliate-js] {body}");
-                    let Some((store, book_id)) = &persistence else {
-                        return;
-                    };
                     let Ok(message) = serde_json::from_str::<Value>(body) else {
                         return;
                     };
@@ -368,14 +616,21 @@ impl Spike {
                         .get("cfi")
                         .and_then(Value::as_str)
                         .filter(|cfi| cfi.starts_with("epubcfi(") && cfi.len() < 4096);
+                    let mut should_refresh_history = false;
                     let result = match message.get("kind").and_then(Value::as_str) {
                         Some("relocate") => {
                             let fraction = message.get("fraction").and_then(Value::as_f64).filter(
                                 |fraction| fraction.is_finite() && (0.0..=1.0).contains(fraction),
                             );
+                            let chapter = message
+                                .get("chapter")
+                                .and_then(Value::as_str)
+                                .map(str::trim)
+                                .filter(|text| !text.is_empty() && text.len() < 512);
                             match (cfi, fraction) {
                                 (Some(cfi), Some(fraction)) => {
-                                    store.save_web_progress(*book_id, cfi, fraction)
+                                    should_refresh_history = true;
+                                    ipc_store.save_progress(book_id, cfi, fraction, chapter)
                                 }
                                 _ => return,
                             }
@@ -400,8 +655,8 @@ impl Spike {
                                         )
                                     });
                             match (cfi, text, color) {
-                                (Some(cfi), Some(text), Some(color)) => store
-                                    .add_web_annotation(*book_id, cfi, color, text)
+                                (Some(cfi), Some(text), Some(color)) => ipc_store
+                                    .add_annotation(book_id, cfi, color, text)
                                     .map(|_| ()),
                                 _ => return,
                             }
@@ -423,19 +678,25 @@ impl Spike {
                                     });
                             match (cfi, color) {
                                 (Some(cfi), Some(color)) => {
-                                    store.recolor_web_annotation(*book_id, cfi, color)
+                                    ipc_store.recolor_annotation(book_id, cfi, color)
                                 }
                                 _ => return,
                             }
                         }
                         Some("annotation-delete") => match cfi {
-                            Some(cfi) => store.delete_web_annotation(*book_id, cfi),
+                            Some(cfi) => ipc_store.delete_annotation(book_id, cfi),
                             None => return,
                         },
                         _ => return,
                     };
                     if let Err(error) = result {
                         eprintln!("保存阅读数据失败：{error}");
+                    } else if should_refresh_history {
+                        let app = async_app.clone();
+                        app.spawn(async move |cx| {
+                            let _ = cx.update(refresh_history);
+                        })
+                        .detach();
                     }
                 });
             WebView::build(builder, window, cx).expect("无法创建 macOS WebView")
@@ -444,7 +705,7 @@ impl Spike {
             webview,
             _server: server,
             settings,
-            settings_store,
+            store,
         })
     }
 
@@ -494,35 +755,30 @@ impl Spike {
             "theme" => self.settings.dark = !self.settings.dark,
             _ => return,
         }
-        if let Some(store) = &self.settings_store {
-            let (name, value) = match key {
-                "font-smaller" | "font-larger" => {
-                    ("font_size", self.settings.font_size.to_string())
-                }
-                "line-smaller" | "line-larger" => {
-                    ("line_height", self.settings.line_height.to_string())
-                }
-                "width-smaller" | "width-larger" => {
-                    ("content_width", self.settings.content_width.to_string())
-                }
-                "letter-smaller" | "letter-larger" => (
-                    "web_letter_spacing",
-                    self.settings.letter_spacing.to_string(),
-                ),
-                "paragraph-smaller" | "paragraph-larger" => (
-                    "paragraph_spacing",
-                    self.settings.paragraph_spacing.to_string(),
-                ),
-                "font-family" => ("web_font_family", self.settings.font_family.clone()),
-                "theme" => (
-                    "theme",
-                    if self.settings.dark { "dark" } else { "light" }.to_owned(),
-                ),
-                _ => unreachable!(),
-            };
-            if let Err(error) = store.save_setting(name, &value) {
-                eprintln!("保存阅读设置失败：{error}");
+        let (name, value) = match key {
+            "font-smaller" | "font-larger" => ("font_size", self.settings.font_size.to_string()),
+            "line-smaller" | "line-larger" => {
+                ("line_height", self.settings.line_height.to_string())
             }
+            "width-smaller" | "width-larger" => {
+                ("content_width", self.settings.content_width.to_string())
+            }
+            "letter-smaller" | "letter-larger" => {
+                ("letter_spacing", self.settings.letter_spacing.to_string())
+            }
+            "paragraph-smaller" | "paragraph-larger" => (
+                "paragraph_spacing",
+                self.settings.paragraph_spacing.to_string(),
+            ),
+            "font-family" => ("font_family", self.settings.font_family.clone()),
+            "theme" => (
+                "theme",
+                if self.settings.dark { "dark" } else { "light" }.to_owned(),
+            ),
+            _ => unreachable!(),
+        };
+        if let Err(error) = self.store.save_setting(name, &value) {
+            eprintln!("保存阅读设置失败：{error}");
         }
         let script = format!("window.applyReaderSettings?.({})", self.settings.json());
         self.webview.update(cx, |view, _| {
@@ -534,29 +790,39 @@ impl Spike {
     }
 }
 
-impl Render for Spike {
+impl Render for ReaderWindow {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
+            .on_drop(cx.listener(|_, paths: &ExternalPaths, _, cx| {
+                open_epub_paths(paths.paths().to_vec(), false, cx);
+            }))
             .child(
                 h_flex()
-                    .p_2()
+                    .px_3()
+                    .py_2()
                     .gap_2()
                     .flex_wrap()
+                    .items_center()
+                    .child(
+                        Button::new("open-file")
+                            .label("打开…")
+                            .on_click(|_, _, cx| prompt_open_epubs(cx)),
+                    )
+                    .child(
+                        Button::new("history")
+                            .label("最近阅读")
+                            .on_click(|_, _, cx| open_or_focus_history_window(cx)),
+                    )
                     .child(
                         Button::new("previous")
-                            .label("GPUI 上一页")
+                            .label("上一页")
                             .on_click(cx.listener(|this, _, _, cx| this.send("previous", cx))),
                     )
                     .child(
                         Button::new("next")
-                            .label("GPUI 下一页")
+                            .label("下一页")
                             .on_click(cx.listener(|this, _, _, cx| this.send("next", cx))),
-                    )
-                    .child(
-                        Button::new("highlight")
-                            .label("GPUI 高亮选中")
-                            .on_click(cx.listener(|this, _, _, cx| this.send("highlight", cx))),
                     )
                     .child(
                         Button::new("toc")
@@ -568,6 +834,11 @@ impl Render for Spike {
                             .label("高亮")
                             .on_click(cx.listener(|this, _, _, cx| this.send("notes", cx))),
                     )
+                    .child(
+                        Button::new("highlight")
+                            .label("高亮选中")
+                            .on_click(cx.listener(|this, _, _, cx| this.send("highlight", cx))),
+                    )
                     .child(Button::new("font-smaller").label("A−").on_click(
                         cx.listener(|this, _, _, cx| this.update_settings("font-smaller", cx)),
                     ))
@@ -577,11 +848,7 @@ impl Render for Spike {
                     ))
                     .child(
                         Button::new("theme")
-                            .label(if self.settings.dark {
-                                "浅色"
-                            } else {
-                                "深色"
-                            })
+                            .label(if self.settings.dark { "浅色" } else { "深色" })
                             .on_click(
                                 cx.listener(|this, _, _, cx| this.update_settings("theme", cx)),
                             ),
@@ -589,9 +856,18 @@ impl Render for Spike {
             )
             .child(
                 h_flex()
-                    .p_2()
+                    .px_3()
+                    .pb_2()
                     .gap_2()
                     .flex_wrap()
+                    .items_center()
+                    .child(
+                        Button::new("font-family")
+                            .label(self.settings.font_family_label())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.update_settings("font-family", cx)
+                            })),
+                    )
                     .child(Button::new("line-smaller").label("行距−").on_click(
                         cx.listener(|this, _, _, cx| this.update_settings("line-smaller", cx)),
                     ))
@@ -605,20 +881,7 @@ impl Render for Spike {
                     .child(format!("{}px", self.settings.content_width as u32))
                     .child(Button::new("width-larger").label("宽度+").on_click(
                         cx.listener(|this, _, _, cx| this.update_settings("width-larger", cx)),
-                    )),
-            )
-            .child(
-                h_flex()
-                    .p_2()
-                    .gap_2()
-                    .flex_wrap()
-                    .child(
-                        Button::new("font-family")
-                            .label(format!("字体：{}", self.settings.font_family))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.update_settings("font-family", cx)
-                            })),
-                    )
+                    ))
                     .child(Button::new("letter-smaller").label("字距−").on_click(
                         cx.listener(|this, _, _, cx| this.update_settings("letter-smaller", cx)),
                     ))
@@ -639,7 +902,7 @@ impl Render for Spike {
 }
 
 fn serve(mut stream: TcpStream, book: Option<&[u8]>, session: Option<&str>) -> std::io::Result<()> {
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(2)))?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     let mut request = [0u8; 8192];
     let length = stream.read(&mut request)?;
     let first_line = String::from_utf8_lossy(&request[..length]);
@@ -737,58 +1000,115 @@ fn start_server(book: Option<Vec<u8>>, session: Option<String>) -> ReaderServer 
     ReaderServer { url, running }
 }
 
-fn main() {
-    let mut args = env::args_os().skip(1);
-    let first_arg = args.next();
-    let stored_id = if first_arg.as_deref() == Some(std::ffi::OsStr::new("--book-id")) {
-        Some(
-            args.next()
-                .expect("--book-id 需要书籍 ID")
-                .to_string_lossy()
-                .parse::<i64>()
-                .expect("书籍 ID 必须是整数"),
-        )
-    } else {
-        None
-    };
-    let self_test = args.any(|arg| arg == std::ffi::OsStr::new("--self-test"));
-    let book_path = if stored_id.is_none() {
-        first_arg.map(PathBuf::from)
-    } else {
-        None
-    };
-    let direct_server = book_path.map(|path| {
-        let bytes =
-            fs::read(&path).unwrap_or_else(|error| panic!("无法读取 {}: {error}", path.display()));
-        start_server(Some(bytes), None)
+fn configure_menus(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("cmd-o", OpenFile, None),
+        KeyBinding::new("cmd-shift-o", ShowHistory, None),
+        KeyBinding::new("cmd-w", CloseWindow, None),
+        KeyBinding::new("cmd-q", QuitApp, None),
+    ]);
+    cx.on_action(|_: &OpenFile, cx| prompt_open_epubs(cx));
+    cx.on_action(|_: &ShowHistory, cx| open_or_focus_history_window(cx));
+    cx.on_action(|_: &CloseWindow, cx| {
+        if let Some(window) = cx.active_window() {
+            let _ = window.update(cx, |_, window, _| window.remove_window());
+        }
     });
-    let store = if direct_server.is_none() {
-        Some(Rc::new(Store::open().expect("无法打开现有书库")))
-    } else {
-        None
-    };
-    gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
-        .run(move |cx| {
-            gpui_kit::init(cx);
-            if let Some(server) = direct_server {
-                gpui_kit::open_window(WindowOptions::default(), cx, move |window, cx| {
-                    Spike::new(window, cx, server, None, ReaderSettings::load(None))
-                })
-                .expect("无法打开 GPUI 阅读窗口");
-            } else if let (Some(store), Some(id)) = (&store, stored_id) {
-                let book = store
-                    .books()
-                    .expect("无法读取书库")
-                    .into_iter()
-                    .find(|book| book.id == id)
-                    .expect("书籍 ID 不存在");
-                open_stored_book(store.clone(), book, self_test, cx).expect("无法打开书库中的书籍");
-            } else if let Some(store) = &store {
-                gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
-                    LibraryView::new(store.clone(), cx)
-                })
-                .expect("无法打开 GPUI 书库窗口");
-            }
+    cx.on_action(|_: &QuitApp, cx| cx.quit());
+    cx.set_menus(vec![
+        Menu::new("Orange Reader").items([MenuItem::action("退出 Orange Reader", QuitApp)]),
+        Menu::new("文件").items([
+            MenuItem::action("打开 EPUB…", OpenFile),
+            MenuItem::action("最近阅读", ShowHistory),
+            MenuItem::separator(),
+            MenuItem::action("关闭窗口", CloseWindow),
+        ]),
+    ]);
+}
+
+fn main() {
+    let mut self_test = false;
+    let mut initial_paths = Vec::new();
+    for arg in env::args_os().skip(1) {
+        if arg == std::ffi::OsStr::new("--self-test") {
+            self_test = true;
+        } else {
+            initial_paths.push(PathBuf::from(arg));
+        }
+    }
+
+    let store = Rc::new(Store::open().expect("无法打开阅读历史数据库"));
+    let pending_urls: Rc<RefCell<Vec<PathBuf>>> = Rc::new(RefCell::new(Vec::new()));
+    let async_handle: Rc<RefCell<Option<AsyncApp>>> = Rc::new(RefCell::new(None));
+
+    let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
+
+    let url_queue = pending_urls.clone();
+    let url_app = async_handle.clone();
+    app.on_open_urls(move |urls| {
+        let paths: Vec<PathBuf> = urls.iter().filter_map(|u| file_url_to_path(u)).collect();
+        if paths.is_empty() {
+            return;
+        }
+        if let Some(app) = url_app.borrow().clone() {
+            app.spawn(async move |cx| {
+                let _ = cx.update(|cx| open_epub_paths(paths, false, cx));
+            })
+            .detach();
+        } else {
+            url_queue.borrow_mut().extend(paths);
+        }
+    });
+
+    app.on_reopen(|cx| {
+        if cx.windows().is_empty() {
+            open_or_focus_history_window(cx);
+        }
+    });
+
+    app.run(move |cx| {
+        gpui_kit::init(cx);
+        cx.set_global(AppState {
+            store,
+            history_window: None,
+            open_books: HashMap::new(),
+            last_error: None,
         });
+        configure_menus(cx);
+        *async_handle.borrow_mut() = Some(cx.to_async());
+
+        let mut startup_paths = initial_paths;
+        startup_paths.extend(pending_urls.borrow_mut().drain(..));
+        if startup_paths.is_empty() {
+            open_or_focus_history_window(cx);
+        } else {
+            open_epub_paths(startup_paths, self_test, cx);
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FoliateAssets, file_url_to_path};
+    use std::path::PathBuf;
+
+    #[test]
+    fn embeds_epub_renderer() {
+        assert!(FoliateAssets::get("view.js").is_some());
+        assert!(FoliateAssets::get("epub.js").is_some());
+        assert!(FoliateAssets::get("vendor/zip.js").is_some());
+    }
+
+    #[test]
+    fn decodes_macos_file_urls_for_epubs() {
+        assert_eq!(
+            file_url_to_path("file:///Users/demo/Books/%E4%B8%89%E4%BD%93.epub"),
+            Some(PathBuf::from("/Users/demo/Books/三体.epub"))
+        );
+        assert_eq!(
+            file_url_to_path("file://localhost/tmp/Sample%20Book.EPUB"),
+            Some(PathBuf::from("/tmp/Sample Book.EPUB"))
+        );
+        assert_eq!(file_url_to_path("file:///tmp/notes.txt"), None);
+    }
 }

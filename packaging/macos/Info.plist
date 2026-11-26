@@ -12,5 +12,21 @@
   <key>CFBundleIconFile</key><string>icon.icns</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.books</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>EPUB Document</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>epub</string>
+      </array>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>org.idpf.epub-container</string>
+      </array>
+    </dict>
+  </array>
 </dict>
 </plist>

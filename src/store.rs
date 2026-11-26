@@ -1,24 +1,30 @@
 use crate::epub::Epub;
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
+use sha2::{Digest, Sha256};
 use std::{
+    fmt::Write as _,
     fs,
     path::{Path, PathBuf},
 };
-use uuid::Uuid;
 
 #[derive(Clone, Debug)]
-pub struct Book {
+pub struct HistoryEntry {
     pub id: i64,
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub file_hash: String,
+    pub file_path: PathBuf,
     pub title: String,
     pub author: String,
-    pub file_path: PathBuf,
     pub cover_path: Option<PathBuf>,
+    pub cfi: Option<String>,
     pub fraction: f64,
+    pub chapter_title: Option<String>,
+    pub last_opened_at: String,
 }
 
 #[derive(Clone, Debug)]
-pub struct WebAnnotation {
+pub struct Annotation {
     pub id: i64,
     pub cfi: String,
     pub color: String,
@@ -29,6 +35,19 @@ pub struct WebAnnotation {
 pub struct Store {
     conn: Connection,
     root: PathBuf,
+}
+
+pub fn hash_bytes(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
+}
+
+pub fn normalize_path(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn cover_extension(bytes: &[u8]) -> &'static str {
@@ -43,6 +62,24 @@ fn cover_extension(bytes: &[u8]) -> &'static str {
     }
 }
 
+fn map_history_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
+    Ok(HistoryEntry {
+        id: row.get(0)?,
+        file_hash: row.get(1)?,
+        file_path: PathBuf::from(row.get::<_, String>(2)?),
+        title: row.get(3)?,
+        author: row.get(4)?,
+        cover_path: row.get::<_, Option<String>>(5)?.map(PathBuf::from),
+        cfi: row.get(6)?,
+        fraction: row.get(7)?,
+        chapter_title: row.get(8)?,
+        last_opened_at: row.get(9)?,
+    })
+}
+
+const HISTORY_SELECT: &str = "SELECT id, file_hash, file_path, title, author, cover_path, \
+    cfi, fraction, chapter_title, last_opened_at FROM reading_history";
+
 impl Store {
     pub fn open() -> Result<Self> {
         let root = if let Some(path) = std::env::var_os("ORANGE_READER_DATA_DIR") {
@@ -53,105 +90,228 @@ impl Store {
             } else {
                 dirs::config_dir().context("Config directory unavailable")?
             };
-            ["Orange Reader", "orange-reader"]
-                .into_iter()
-                .map(|name| base.join(name))
-                .find(|path| path.join("orange-reader.db").exists())
-                .unwrap_or_else(|| base.join("orange-reader"))
+            base.join("orange-reader")
         };
-        fs::create_dir_all(root.join("books"))?;
+        Self::open_in(root)
+    }
+
+    pub fn open_in(root: PathBuf) -> Result<Self> {
         fs::create_dir_all(root.join("covers"))?;
-        let conn = Connection::open(root.join("orange-reader.db"))?;
+        let conn = Connection::open(root.join("history.db"))?;
+        Self::init(conn, root)
+    }
+
+    fn init(conn: Connection, root: PathBuf) -> Result<Self> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        conn.execute_batch("CREATE TABLE IF NOT EXISTS books (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, author TEXT DEFAULT '',
-            cover_path TEXT, file_path TEXT NOT NULL, created_at TEXT DEFAULT (datetime('now')));
-            CREATE TABLE IF NOT EXISTS reading_progress (
-            book_id INTEGER PRIMARY KEY, cfi TEXT NOT NULL, fraction REAL DEFAULT 0,
-            updated_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE);
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS reading_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_hash TEXT NOT NULL UNIQUE,
+                file_path TEXT NOT NULL,
+                title TEXT NOT NULL,
+                author TEXT NOT NULL DEFAULT '',
+                cover_path TEXT,
+                cfi TEXT,
+                fraction REAL NOT NULL DEFAULT 0,
+                chapter_title TEXT,
+                last_opened_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_reading_history_last_opened
+                ON reading_history(last_opened_at DESC, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_reading_history_file_path
+                ON reading_history(file_path);
             CREATE TABLE IF NOT EXISTS annotations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, book_id INTEGER NOT NULL,
-            cfi TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#FFE066',
-            type TEXT NOT NULL DEFAULT 'highlight', text TEXT,
-            created_at TEXT DEFAULT (datetime('now')),
-            FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE);
-            CREATE TABLE IF NOT EXISTS native_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);")?;
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_id INTEGER NOT NULL,
+                cfi TEXT NOT NULL,
+                color TEXT NOT NULL DEFAULT '#FFE066',
+                type TEXT NOT NULL DEFAULT 'highlight',
+                text TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+                FOREIGN KEY (book_id) REFERENCES reading_history(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );",
+        )?;
         Ok(Self { conn, root })
     }
 
-    pub fn books(&self) -> Result<Vec<Book>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT b.id,b.title,b.author,b.file_path,b.cover_path,
-            COALESCE(p.fraction,0) FROM books b LEFT JOIN reading_progress p ON p.book_id=b.id
-            ORDER BY b.created_at DESC,b.id DESC",
-        )?;
-        let rows = stmt.query_map([], |r| {
-            Ok(Book {
-                id: r.get(0)?,
-                title: r.get(1)?,
-                author: r.get(2)?,
-                file_path: PathBuf::from(r.get::<_, String>(3)?),
-                cover_path: r.get::<_, Option<String>>(4)?.map(PathBuf::from),
-                fraction: r.get(5)?,
-            })
-        })?;
+    pub fn history(&self) -> Result<Vec<HistoryEntry>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "{HISTORY_SELECT} ORDER BY last_opened_at DESC, id DESC"
+        ))?;
+        let rows = stmt.query_map([], map_history_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
     }
 
-    pub fn import(&self, source: &Path, epub: &Epub) -> Result<()> {
-        let title = &epub.title;
-        let exists: bool = self.conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM books WHERE title=?1)",
-            [title],
-            |r| r.get(0),
-        )?;
-        if exists {
-            anyhow::bail!("Book already exists: {title}");
-        }
-        let file_path = self
-            .root
-            .join("books")
-            .join(format!("{}.epub", Uuid::new_v4()));
-        fs::copy(source, &file_path)?;
-        let result = self.conn.execute(
-            "INSERT INTO books(title,author,file_path) VALUES(?1,?2,?3)",
-            params![epub.title, epub.author, file_path.to_string_lossy()],
-        );
-        let id = match result {
-            Ok(_) => self.conn.last_insert_rowid(),
-            Err(e) => {
-                let _ = fs::remove_file(&file_path);
-                return Err(e.into());
-            }
-        };
-        if let Some(bytes) = &epub.cover {
-            let cover_path = self
-                .root
-                .join("covers")
-                .join(format!("{id}.{}", cover_extension(bytes)));
-            fs::write(&cover_path, bytes)?;
-            self.conn.execute(
-                "UPDATE books SET cover_path=?1 WHERE id=?2",
-                params![cover_path.to_string_lossy(), id],
-            )?;
-        }
-        Ok(())
+    pub fn get_entry(&self, id: i64) -> Result<Option<HistoryEntry>> {
+        self.conn
+            .query_row(&format!("{HISTORY_SELECT} WHERE id=?1"), [id], map_history_row)
+            .optional()
+            .map_err(Into::into)
     }
 
-    pub fn delete(&self, id: i64) -> Result<()> {
-        let book = self
-            .books()?
-            .into_iter()
-            .find(|b| b.id == id)
-            .context("Book not found")?;
-        self.conn.execute("DELETE FROM books WHERE id=?1", [id])?;
-        if book.file_path.starts_with(self.root.join("books")) {
-            let _ = fs::remove_file(book.file_path);
+    fn save_cover_cache(&self, file_hash: &str, epub: &Epub) -> Result<Option<PathBuf>> {
+        let Some(bytes) = &epub.cover else {
+            return Ok(None);
+        };
+        let path = self
+            .root
+            .join("covers")
+            .join(format!("{file_hash}.{}", cover_extension(bytes)));
+        if !path.exists() {
+            fs::write(&path, bytes)?;
         }
-        if let Some(cover) = book.cover_path {
+        Ok(Some(path))
+    }
+
+    /// Record opening an EPUB file on disk without copying it.
+    ///
+    /// Matching order:
+    /// 1. Content SHA-256 hash: seamlessly resumes progress & highlights even if moved/renamed.
+    /// 2. Same canonical file path + same title: updates hash if edited in place.
+    /// 3. Otherwise creates a new history entry.
+    pub fn record_open(&self, path: &Path, bytes: &[u8], epub: &Epub) -> Result<HistoryEntry> {
+        let canonical = normalize_path(path);
+        let canonical_str = canonical.to_string_lossy().into_owned();
+        let file_hash = hash_bytes(bytes);
+
+        if let Some(existing) = self
+            .conn
+            .query_row(
+                &format!("{HISTORY_SELECT} WHERE file_hash=?1"),
+                [&file_hash],
+                map_history_row,
+            )
+            .optional()?
+        {
+            let cover_path = match existing.cover_path {
+                Some(path) if path.exists() => Some(path),
+                _ => self.save_cover_cache(&file_hash, epub)?,
+            };
+            self.conn.execute(
+                "UPDATE reading_history
+                 SET file_path=?2, title=?3, author=?4, cover_path=?5,
+                     last_opened_at=datetime('now', 'localtime')
+                 WHERE id=?1",
+                params![
+                    existing.id,
+                    canonical_str,
+                    epub.title,
+                    epub.author,
+                    cover_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                ],
+            )?;
+            return self
+                .get_entry(existing.id)?
+                .context("无法读取已更新的历史记录");
+        }
+
+        if let Some(existing) = self
+            .conn
+            .query_row(
+                &format!(
+                    "{HISTORY_SELECT} WHERE file_path=?1 AND title=?2
+                     ORDER BY last_opened_at DESC, id DESC LIMIT 1"
+                ),
+                params![&canonical_str, &epub.title],
+                map_history_row,
+            )
+            .optional()?
+        {
+            let cover_path = self
+                .save_cover_cache(&file_hash, epub)?
+                .or(existing.cover_path);
+            self.conn.execute(
+                "UPDATE reading_history
+                 SET file_hash=?2, author=?3, cover_path=?4,
+                     last_opened_at=datetime('now', 'localtime')
+                 WHERE id=?1",
+                params![
+                    existing.id,
+                    file_hash,
+                    epub.author,
+                    cover_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                ],
+            )?;
+            return self
+                .get_entry(existing.id)?
+                .context("无法读取已更新的历史记录");
+        }
+
+        let cover_path = self.save_cover_cache(&file_hash, epub)?;
+        self.conn.execute(
+            "INSERT INTO reading_history(file_hash, file_path, title, author, cover_path)
+             VALUES(?1, ?2, ?3, ?4, ?5)",
+            params![
+                file_hash,
+                canonical_str,
+                epub.title,
+                epub.author,
+                cover_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            ],
+        )?;
+        let id = self.conn.last_insert_rowid();
+        self.get_entry(id)?.context("无法读取新建的历史记录")
+    }
+
+    /// Relocate a missing history entry to a user-selected file path.
+    /// If the new file matches another existing history entry by hash, returns that entry.
+    pub fn relocate_entry(
+        &self,
+        id: i64,
+        new_path: &Path,
+        bytes: &[u8],
+        epub: &Epub,
+    ) -> Result<HistoryEntry> {
+        let canonical = normalize_path(new_path);
+        let canonical_str = canonical.to_string_lossy().into_owned();
+        let file_hash = hash_bytes(bytes);
+
+        if let Some(existing_by_hash) = self
+            .conn
+            .query_row(
+                &format!("{HISTORY_SELECT} WHERE file_hash=?1"),
+                [&file_hash],
+                map_history_row,
+            )
+            .optional()?
+        {
+            if existing_by_hash.id != id {
+                return self.record_open(&canonical, bytes, epub);
+            }
+        }
+
+        let cover_path = self.save_cover_cache(&file_hash, epub)?;
+        self.conn.execute(
+            "UPDATE reading_history
+             SET file_hash=?2, file_path=?3, title=?4, author=?5,
+                 cover_path=COALESCE(?6, cover_path),
+                 last_opened_at=datetime('now', 'localtime')
+             WHERE id=?1",
+            params![
+                id,
+                file_hash,
+                canonical_str,
+                epub.title,
+                epub.author,
+                cover_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            ],
+        )?;
+        self.get_entry(id)?.context("无法读取重新定位后的历史记录")
+    }
+
+    /// Remove a record from reading history. Never deletes the user's EPUB file on disk.
+    pub fn remove_history(&self, id: i64) -> Result<()> {
+        let entry = self.get_entry(id)?;
+        self.conn
+            .execute("DELETE FROM reading_history WHERE id=?1", [id])?;
+        if let Some(cover) = entry.and_then(|e| e.cover_path) {
             if cover.starts_with(self.root.join("covers")) {
                 let _ = fs::remove_file(cover);
             }
@@ -159,34 +319,30 @@ impl Store {
         Ok(())
     }
 
-    pub fn web_progress(&self, book_id: i64) -> Result<Option<(String, f64)>> {
-        self.conn
-            .query_row(
-                "SELECT cfi,fraction FROM reading_progress WHERE book_id=?1",
-                [book_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            .map_err(Into::into)
-    }
-
-    pub fn save_web_progress(&self, book_id: i64, cfi: &str, fraction: f64) -> Result<()> {
+    pub fn save_progress(
+        &self,
+        book_id: i64,
+        cfi: &str,
+        fraction: f64,
+        chapter_title: Option<&str>,
+    ) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO reading_progress(book_id,cfi,fraction) VALUES(?1,?2,?3)
-            ON CONFLICT(book_id) DO UPDATE SET cfi=excluded.cfi,fraction=excluded.fraction,
-            updated_at=datetime('now')",
-            params![book_id, cfi, fraction],
+            "UPDATE reading_history
+             SET cfi=?2, fraction=?3, chapter_title=COALESCE(?4, chapter_title),
+                 updated_at=datetime('now', 'localtime')
+             WHERE id=?1",
+            params![book_id, cfi, fraction, chapter_title],
         )?;
         Ok(())
     }
 
-    pub fn web_annotations(&self, book_id: i64) -> Result<Vec<WebAnnotation>> {
+    pub fn annotations(&self, book_id: i64) -> Result<Vec<Annotation>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id,cfi,color,type,text FROM annotations
-            WHERE book_id=?1 ORDER BY id ASC",
+            "SELECT id, cfi, color, type, text FROM annotations
+             WHERE book_id=?1 ORDER BY id ASC",
         )?;
         let rows = stmt.query_map([book_id], |row| {
-            Ok(WebAnnotation {
+            Ok(Annotation {
                 id: row.get(0)?,
                 cfi: row.get(1)?,
                 color: row.get(2)?,
@@ -198,7 +354,7 @@ impl Store {
             .map_err(Into::into)
     }
 
-    pub fn add_web_annotation(
+    pub fn add_annotation(
         &self,
         book_id: i64,
         cfi: &str,
@@ -206,14 +362,14 @@ impl Store {
         text: &str,
     ) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO annotations(book_id,cfi,color,type,text)
-            VALUES(?1,?2,?3,'highlight',?4)",
+            "INSERT INTO annotations(book_id, cfi, color, type, text)
+             VALUES(?1, ?2, ?3, 'highlight', ?4)",
             params![book_id, cfi, color, text],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
 
-    pub fn recolor_web_annotation(&self, book_id: i64, cfi: &str, color: &str) -> Result<()> {
+    pub fn recolor_annotation(&self, book_id: i64, cfi: &str, color: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE annotations SET color=?3 WHERE book_id=?1 AND cfi=?2",
             params![book_id, cfi, color],
@@ -221,7 +377,7 @@ impl Store {
         Ok(())
     }
 
-    pub fn delete_web_annotation(&self, book_id: i64, cfi: &str) -> Result<()> {
+    pub fn delete_annotation(&self, book_id: i64, cfi: &str) -> Result<()> {
         self.conn.execute(
             "DELETE FROM annotations WHERE book_id=?1 AND cfi=?2",
             params![book_id, cfi],
@@ -231,18 +387,16 @@ impl Store {
 
     pub fn setting(&self, key: &str) -> Option<String> {
         self.conn
-            .query_row(
-                "SELECT value FROM native_settings WHERE key=?1",
-                [key],
-                |r| r.get(0),
-            )
+            .query_row("SELECT value FROM settings WHERE key=?1", [key], |r| {
+                r.get(0)
+            })
             .ok()
     }
 
     pub fn save_setting(&self, key: &str, value: &str) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO native_settings(key,value) VALUES(?1,?2)
-            ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            "INSERT INTO settings(key, value) VALUES(?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             params![key, value],
         )?;
         Ok(())
@@ -250,60 +404,93 @@ impl Store {
 }
 
 #[cfg(test)]
-mod web_tests {
-    use super::{Store, cover_extension};
-    use rusqlite::Connection;
-    use std::path::PathBuf;
+mod tests {
+    use super::{Store, cover_extension, hash_bytes};
+    use crate::epub::Epub;
+    use std::fs;
 
-    #[test]
-    fn web_progress_and_annotations_round_trip() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            "CREATE TABLE reading_progress (
-            book_id INTEGER PRIMARY KEY, cfi TEXT NOT NULL, fraction REAL DEFAULT 0,
-            updated_at TEXT DEFAULT (datetime('now')));
-            CREATE TABLE annotations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, book_id INTEGER NOT NULL,
-            cfi TEXT NOT NULL, color TEXT NOT NULL, type TEXT NOT NULL, text TEXT);",
-        )
-        .unwrap();
-        let store = Store {
-            conn,
-            root: PathBuf::new(),
-        };
-        let cfi = "epubcfi(/6/12!/4/42,/1:53,/1:97)";
+    fn temp_dir() -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("orange-reader-store-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 
-        assert!(store.web_progress(7).unwrap().is_none());
-        store.save_web_progress(7, cfi, 0.25).unwrap();
-        assert_eq!(store.web_progress(7).unwrap(), Some((cfi.to_owned(), 0.25)));
-        store
-            .save_web_progress(7, "epubcfi(/6/14!/4)", 0.5)
-            .unwrap();
-        assert_eq!(
-            store.web_progress(7).unwrap(),
-            Some(("epubcfi(/6/14!/4)".to_owned(), 0.5))
-        );
-
-        let id = store
-            .add_web_annotation(7, cfi, "#FFE066", "选中的文字")
-            .unwrap();
-        let annotations = store.web_annotations(7).unwrap();
-        assert_eq!(annotations.len(), 1);
-        assert_eq!(annotations[0].id, id);
-        assert_eq!(annotations[0].cfi, cfi);
-        assert_eq!(annotations[0].color, "#FFE066");
-        assert_eq!(annotations[0].kind, "highlight");
-        assert_eq!(annotations[0].text.as_deref(), Some("选中的文字"));
-        store.recolor_web_annotation(7, cfi, "#86EFAC").unwrap();
-        assert_eq!(store.web_annotations(7).unwrap()[0].color, "#86EFAC");
-        store.delete_web_annotation(7, cfi).unwrap();
-        assert!(store.web_annotations(7).unwrap().is_empty());
+    fn sample_epub(title: &str) -> Epub {
+        Epub {
+            title: title.to_owned(),
+            author: "Author".to_owned(),
+            cover: Some(b"\x89PNG\r\n\x1a\ncover".to_vec()),
+        }
     }
 
     #[test]
-    fn keeps_cover_image_format() {
+    fn hash_matches_across_moved_file_and_preserves_progress_and_annotations() {
+        let root = temp_dir();
+        let store = Store::open_in(root.clone()).unwrap();
+        let epub = sample_epub("The Book");
+        let bytes = b"fake-epub-binary-content";
+
+        let path_a = root.join("folder_a").join("book.epub");
+        let path_b = root.join("folder_b").join("renamed.epub");
+        fs::create_dir_all(path_a.parent().unwrap()).unwrap();
+        fs::create_dir_all(path_b.parent().unwrap()).unwrap();
+        fs::write(&path_a, bytes).unwrap();
+
+        let entry = store.record_open(&path_a, bytes, &epub).unwrap();
+        assert_eq!(entry.file_hash, hash_bytes(bytes));
+        assert!(entry.cover_path.as_ref().is_some_and(|p| p.exists()));
+
+        let cfi = "epubcfi(/6/12!/4/42,/1:10,/1:20)";
+        store
+            .save_progress(entry.id, cfi, 0.42, Some("第一章"))
+            .unwrap();
+        store
+            .add_annotation(entry.id, cfi, "#FFE066", "选中的文字")
+            .unwrap();
+
+        // Move the file to a new path and open again
+        fs::rename(&path_a, &path_b).unwrap();
+        let reopened = store.record_open(&path_b, bytes, &epub).unwrap();
+        assert_eq!(reopened.id, entry.id);
+        assert_eq!(reopened.file_path, fs::canonicalize(&path_b).unwrap());
+        assert_eq!(reopened.cfi.as_deref(), Some(cfi));
+        assert_eq!(reopened.fraction, 0.42);
+        assert_eq!(reopened.chapter_title.as_deref(), Some("第一章"));
+
+        let annotations = store.annotations(reopened.id).unwrap();
+        assert_eq!(annotations.len(), 1);
+        assert_eq!(annotations[0].text.as_deref(), Some("选中的文字"));
+
+        store
+            .recolor_annotation(reopened.id, cfi, "#86EFAC")
+            .unwrap();
+        assert_eq!(store.annotations(reopened.id).unwrap()[0].color, "#86EFAC");
+        store.delete_annotation(reopened.id, cfi).unwrap();
+        assert!(store.annotations(reopened.id).unwrap().is_empty());
+
+        // Removing history must NOT delete the user's EPUB on disk
+        store.remove_history(reopened.id).unwrap();
+        assert!(store.history().unwrap().is_empty());
+        assert!(path_b.exists());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn settings_round_trip_and_cover_extension() {
+        let root = temp_dir();
+        let store = Store::open_in(root.clone()).unwrap();
+        assert!(store.setting("theme").is_none());
+        store.save_setting("theme", "dark").unwrap();
+        assert_eq!(store.setting("theme").as_deref(), Some("dark"));
+        store.save_setting("theme", "light").unwrap();
+        assert_eq!(store.setting("theme").as_deref(), Some("light"));
+
         assert_eq!(cover_extension(b"\x89PNG\r\n\x1a\n..."), "png");
         assert_eq!(cover_extension(b"GIF89a..."), "gif");
         assert_eq!(cover_extension(b"\xff\xd8\xff..."), "jpg");
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

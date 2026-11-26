@@ -1,6 +1,8 @@
 # Orange Reader
 
-macOS EPUB 阅读器。应用界面使用 GPUI Kit，书页由嵌入的 WKWebView 和 foliate-js 排版。阅读器及其网页资源一起编译进可执行文件，运行时不需要 Electron、Node.js 或源码目录。
+轻量级 macOS 原生 EPUB 阅读器。界面使用 GPUI Kit，书页由嵌入的 WKWebView 和 foliate-js 排版。阅读器及其网页资源一起编译进单个可执行文件，运行时不需要 Electron、Node.js 或源码目录。
+
+Orange Reader **不做书架或文件拷贝管理**——你的 EPUB 留在原本的文件夹里，像使用 macOS 预览或 IINA 一样自然打开阅读；应用仅记录**最近阅读历史**（看过哪本、文件在什么位置、看到了哪里）以及对应的高亮与阅读偏好。
 
 ## 开发运行
 
@@ -10,17 +12,17 @@ macOS EPUB 阅读器。应用界面使用 GPUI Kit，书页由嵌入的 WKWebVie
 cargo run
 ```
 
-启动后可从书库导入 EPUB，也可把 EPUB 拖入书库。`cargo run -- /path/to/book.epub` 可直接打开单本书；`cargo run -- --book-id 1` 可打开书库中的指定书籍。
-
-开发和测试时可用 `ORANGE_READER_DATA_DIR=/private/tmp/orange-reader-test cargo run` 指定隔离书库，避免修改日常阅读数据。
+- 无参数启动：打开「最近阅读」窗口，可点击「打开 EPUB…」（`⌘O`）或直接把 `.epub` 拖入窗口开始阅读。
+- 直接打开书籍：`cargo run -- /path/to/book.epub` 直接弹出阅读窗口，并自动记录历史与进度（支持同时打开多本书窗口）。
+- 打包安装后：支持在 Finder 中双击 `.epub` 或通过右键「打开方式 → Orange Reader」打开。
+- 隔离测试数据：`ORANGE_READER_DATA_DIR=/private/tmp/orange-reader-test cargo run` 可使用临时目录，不影响日常阅读记录。
 
 ## 功能与数据
 
-- 书库展示封面、作者和进度；支持导入、阅读与删除。
-- 书页支持目录、翻页、选字、高亮、改色和删除高亮。
-- 阅读位置以 EPUB CFI 保存；字号、字体、行距、字距、段距、内容宽度和明暗主题可保存。
-- SQLite 书库沿用旧 Electron 版本的 `books`、`reading_progress` 和 `annotations` 表；旧 GPUI 文字原型的进度可按 fraction 恢复。
-- 书库仍保留历史 `native_progress` 和 `native_annotations` 表，不会删除已有数据。旧文字原型创建的段落批注没有 CFI，当前阅读页无法精确显示它们。
+- **最近阅读历史**：按最近阅读时间排序，显示书名、作者、磁盘文件路径、上次阅读章节与百分比进度；支持一键继续阅读、在 Finder 中显示位置、移出历史（仅清除记录，**绝不删除原文件**）。
+- **路径 + 内容哈希双匹配**：即使把 `.epub` 移动到别的目录或重命名，再次打开时会自动通过 SHA-256 识别为同一本书，自动更新路径并续上原有 CFI 进度与高亮；若历史中的文件已移动或删除，会给出提示并支持「重新定位」。
+- **阅读体验**：支持目录跳转、键盘/按钮翻页、选字浮层、多色高亮与删除；阅读位置以 EPUB CFI 保存；字号、字体、行距、字距、段距、内容宽度和明暗主题自动保存。
+- **数据位置**：默认保存在系统配置目录的 `orange-reader/history.db`（及 `covers/` 封面缓存），不拷贝 `.epub` 文件。
 
 ## macOS 打包
 
@@ -37,14 +39,13 @@ cargo test
 cargo check
 ```
 
-打包后可将 `.app` 解压到源码目录之外，使用隔离书库检查打开、目录跳转、进度恢复、高亮操作和设置恢复。
-对隔离书库中已有的书籍，可用 `cargo run -- --book-id 1 --self-test` 执行页内交互自测；终端出现 `self-test-complete` 表示目录跳转、选字工具、高亮创建或改色及删除均已运行。自测会修改该书的阅读位置，因此只应在隔离书库中运行。
+对任意本地 EPUB，可用 `ORANGE_READER_DATA_DIR=/private/tmp/orange-reader-test cargo run -- /path/to/book.epub --self-test` 执行页内交互自测；终端出现 `self-test-complete` 表示目录跳转、选字工具、高亮创建/改色及删除均已运行。
 
 ## 代码结构
 
-- `src/main.rs`：GPUI 书库与阅读窗口、本地资源服务和阅读数据桥接。
+- `src/main.rs`：最近阅读窗口、多窗口阅读器、macOS 打开文件事件、本地资源服务与 WebView IPC。
 - `src/reader.html`：WKWebView 中的 foliate-js 阅读交互。
-- `src/epub.rs`：导入时读取 EPUB 元数据和封面。
-- `src/store.rs`：SQLite 书库、进度、高亮与设置。
+- `src/epub.rs`：打开时读取 EPUB 元数据和封面。
+- `src/store.rs`：SQLite 阅读历史、进度、高亮与设置（`history.db`）。
 - `foliate-js/`：EPUB 排版代码，随应用编译进可执行文件。升级可使用 `scripts/update-foliate-js.sh [ref]`，当前同步的上游版本记录在 `scripts/foliate-js-upstream.txt`。
 - `scripts/package-macos.sh`：创建 macOS 应用包。

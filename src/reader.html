@@ -5,11 +5,11 @@
 <title>Orange Reader</title>
 <style>
   body { margin: 0; font: 14px -apple-system, BlinkMacSystemFont, sans-serif; color: #31281f; background: #fffaf3; }
-  header { display: flex; gap: 10px; align-items: center; padding: 10px 16px; border-bottom: 1px solid #eadfd2; }
+  header { display: flex; gap: 10px; align-items: center; height: 34px; padding: 0 16px; border-bottom: 1px solid #eadfd2; box-sizing: border-box; }
   button { border: 1px solid #d8c8b7; border-radius: 6px; background: white; padding: 6px 12px; cursor: pointer; }
-  #status { margin-left: auto; color: #74685c; }
-  #reader { height: calc(100vh - 54px); }
-  #panel { display: none; position: absolute; z-index: 10; top: 54px; bottom: 0; left: 0;
+  #status { color: #74685c; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #reader { height: calc(100vh - 34px); }
+  #panel { display: none; position: absolute; z-index: 10; top: 34px; bottom: 0; left: 0;
     width: min(340px, 80vw); overflow: auto; background: #fffaf3; border-right: 1px solid #eadfd2;
     box-shadow: 3px 0 14px #0002; padding: 12px; box-sizing: border-box; }
   #panel.open { display: block; }
@@ -26,16 +26,13 @@
   foliate-view { display: block; width: 100%; height: 100%; }
   body.dark { color: #f5f5f7; background: #1c1c1e; }
   body.dark header { border-color: #403b37; }
+  body.dark #status { color: #a1a1a6; }
   body.dark button { color: #f5f5f7; background: #302b28; border-color: #5b5148; }
   body.dark #panel { color: #f5f5f7; background: #242426; border-color: #403b37; }
   body.dark #selection-tools { background: #242426; border-color: #5b5148; }
 </style>
 <header>
-  <input id="file" type="file" accept=".epub,application/epub+zip">
-  <button id="previous">上一页</button>
-  <button id="next">下一页</button>
-  <button id="highlight">高亮选中</button>
-  <span id="status">等待打开 EPUB</span>
+  <span id="status">正在载入…</span>
 </header>
 <main id="reader"></main>
 <aside id="panel"></aside>
@@ -121,6 +118,12 @@
       }
       addItems(view?.book?.toc)
     } else if (panelKind === 'notes') {
+      if (!savedAnnotations.length) {
+        const empty = document.createElement('p')
+        empty.textContent = '暂无高亮。在书页中选中文字即可添加。'
+        panel.append(empty)
+        return
+      }
       for (const annotation of savedAnnotations) {
         const row = document.createElement('div')
         row.className = 'note'
@@ -211,6 +214,12 @@
       report('self-test-error', { message: String(error) })
     }
   }
+  function handleKeydown(event) {
+    if (event.key === 'ArrowLeft' || event.key === 'PageUp') view?.goLeft()
+    if (event.key === 'ArrowRight' || event.key === 'PageDown') view?.goRight()
+  }
+  window.addEventListener('keydown', handleKeydown)
+
   async function open(file, session = null) {
     view?.close?.()
     reader.replaceChildren()
@@ -220,7 +229,6 @@
     lastSelection = undefined
     lastLocation = undefined
     managed = session !== null
-    document.getElementById('file').hidden = managed
     savedAnnotations = session?.annotations || []
     const displayTitle = session?.title || file.name
     closePanel()
@@ -240,11 +248,12 @@
       })
       view.addEventListener('relocate', event => {
         const { fraction, cfi, tocItem } = event.detail
-        status.textContent = `${displayTitle}${tocItem?.label ? ` · ${tocItem.label}` : ''} · ${Math.round((fraction || 0) * 100)}%`
-        const location = JSON.stringify({ fraction, cfi })
+        const chapter = tocItem?.label?.trim() || null
+        status.textContent = `${displayTitle}${chapter ? ` · ${chapter}` : ''} · ${Math.round((fraction || 0) * 100)}%`
+        const location = JSON.stringify({ fraction, cfi, chapter })
         if (location === lastLocation) return
         lastLocation = location
-        report('relocate', { fraction, cfi })
+        report('relocate', { fraction, cfi, chapter })
       })
       view.addEventListener('load', event => {
         const { doc, index } = event.detail
@@ -264,10 +273,7 @@
           showSelectionTools(doc, selection.getRangeAt(0), cfi, text)
           report('selection', { text, cfi })
         })
-        doc.addEventListener('keydown', event => {
-          if (event.key === 'ArrowLeft') view.goLeft()
-          if (event.key === 'ArrowRight') view.goRight()
-        })
+        doc.addEventListener('keydown', handleKeydown)
       })
       const location = session?.location
       try {
@@ -291,12 +297,6 @@
     }
   }
 
-  document.getElementById('file').addEventListener('change', event => {
-    const file = event.target.files?.[0]
-    if (file) open(file)
-  })
-  document.getElementById('previous').onclick = () => view?.goLeft()
-  document.getElementById('next').onclick = () => view?.goRight()
   async function highlightSelection(color = '#FFE066') {
     if (!view || !lastSelection?.cfi) {
       report('highlight-error', { message: '请先在书页里选中文字' })
@@ -320,7 +320,6 @@
       report('highlight-error', { message: String(error) })
     }
   }
-  document.getElementById('highlight').onclick = highlightSelection
   window.readerFromRust = command => {
     if (command === 'next') view?.goRight()
     if (command === 'previous') view?.goLeft()
@@ -330,8 +329,7 @@
   }
   report('ready')
 
-  const startup = '/book.epub'
-  const response = await fetch(startup)
+  const response = await fetch('/book.epub')
   if (response.ok) {
     const sessionResponse = await fetch('/session.json')
     const session = sessionResponse.ok ? await sessionResponse.json() : null
