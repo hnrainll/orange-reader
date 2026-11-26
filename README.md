@@ -46,5 +46,5 @@ cargo check
 - `src/reader.html`：WKWebView 中的 foliate-js 阅读交互。
 - `src/epub.rs`：导入时读取 EPUB 元数据和封面。
 - `src/store.rs`：SQLite 书库、进度、高亮与设置。
-- `foliate-js/`：EPUB 排版代码，随应用编译进可执行文件。
+- `foliate-js/`：EPUB 排版代码，随应用编译进可执行文件。升级可使用 `scripts/update-foliate-js.sh [ref]`，当前同步的上游版本记录在 `scripts/foliate-js-upstream.txt`。
 - `scripts/package-macos.sh`：创建 macOS 应用包。
