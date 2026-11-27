@@ -118,7 +118,7 @@ impl ReaderSettings {
         Self {
             font_size: number("font_size", 18.0, 12.0, 32.0),
             line_height: number("line_height", 1.65, 1.2, 2.4),
-            content_width: number("content_width", 720.0, 520.0, 960.0),
+            content_width: number("content_width", 760.0, 360.0, 1600.0),
             letter_spacing: number("letter_spacing", 0.0, 0.0, 0.1),
             paragraph_spacing: number("paragraph_spacing", 1.0, 0.5, 2.4),
             font_family: store
@@ -150,7 +150,7 @@ impl ReaderSettings {
         };
         save_num("fontSize", "font_size", 12.0, 32.0)?;
         save_num("lineHeight", "line_height", 1.2, 2.4)?;
-        save_num("contentWidth", "content_width", 520.0, 960.0)?;
+        save_num("contentWidth", "content_width", 360.0, 1600.0)?;
         save_num("letterSpacing", "letter_spacing", 0.0, 0.1)?;
         save_num("paragraphSpacing", "paragraph_spacing", 0.5, 2.4)?;
         if let Some(family) = value

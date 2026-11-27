@@ -524,6 +524,8 @@
     transition: background-color 120ms ease;
   }
   .font-size-bar button:hover { background: var(--hover); }
+  .font-size-bar button:disabled { opacity: 0.3; cursor: default; }
+  .font-size-bar button:disabled:hover { background: transparent; }
   .font-size-bar .small-a { font-size: 13px; }
   .font-size-bar .big-a { font-size: 19px; }
   .font-size-val {
@@ -601,6 +603,8 @@
     color: var(--ink);
   }
   .stepper button:hover { background: var(--hover); }
+  .stepper button:disabled { opacity: 0.3; cursor: default; }
+  .stepper button:disabled:hover { background: transparent; }
   .stepper span {
     min-width: 52px;
     text-align: center;
@@ -844,10 +848,11 @@
   const navForward = document.getElementById('nav-forward')
 
   const colors = ['#FFE066', '#86EFAC', '#93C5FD', '#F9A8D4', '#FCA5A5']
+  const GAP_PERCENT = 3
   const defaultSettings = {
     fontSize: 18,
     lineHeight: 1.65,
-    contentWidth: 720,
+    contentWidth: 760,
     letterSpacing: 0,
     paragraphSpacing: 1,
     fontFamily: 'original',
@@ -1134,12 +1139,49 @@
     }
   }
 
+  function getActiveColumns() {
+    if (settings.spread === 'none') return 1
+    return window.innerWidth < window.innerHeight ? 1 : 2
+  }
+
+  function getMinContentWidth() {
+    return getActiveColumns() === 2 ? 360 : 440
+  }
+
+  function getMaxContentWidth() {
+    const cols = getActiveColumns()
+    const viewport = reader.clientWidth || window.innerWidth
+    const gapPx = viewport * (GAP_PERCENT / 100)
+    const maxFitting = Math.floor((viewport - gapPx) / cols)
+    return Math.max(getMinContentWidth(), Math.min(1600, maxFitting))
+  }
+
+  function getEffectiveContentWidth() {
+    return Math.max(getMinContentWidth(), Math.min(getMaxContentWidth(), Math.round(settings.contentWidth)))
+  }
+
   function syncAppearanceUI() {
+    const minW = getMinContentWidth()
+    const maxW = getMaxContentWidth()
+    const effW = getEffectiveContentWidth()
+
     document.getElementById('val-font-size').textContent = `${Math.round(settings.fontSize)}px`
     document.getElementById('val-line-height').textContent = settings.lineHeight.toFixed(2)
-    document.getElementById('val-content-width').textContent = `${Math.round(settings.contentWidth)}px`
+    document.getElementById('val-content-width').textContent = `${effW}px`
     document.getElementById('val-letter-spacing').textContent = `${settings.letterSpacing.toFixed(2)}em`
     document.getElementById('val-para-spacing').textContent = `${settings.paragraphSpacing.toFixed(1)}em`
+
+    document.getElementById('set-font-dec').disabled = settings.fontSize <= 12
+    document.getElementById('set-font-inc').disabled = settings.fontSize >= 32
+    document.getElementById('set-line-dec').disabled = settings.lineHeight <= 1.2
+    document.getElementById('set-line-inc').disabled = settings.lineHeight >= 2.4
+    document.getElementById('set-width-dec').disabled = effW <= minW
+    document.getElementById('set-width-inc').disabled = effW >= maxW
+    document.getElementById('set-letter-dec').disabled = settings.letterSpacing <= 0
+    document.getElementById('set-letter-inc').disabled = settings.letterSpacing >= 0.1
+    document.getElementById('set-para-dec').disabled = settings.paragraphSpacing <= 0.5
+    document.getElementById('set-para-inc').disabled = settings.paragraphSpacing >= 2.4
+
     for (const card of document.querySelectorAll('[data-theme-opt]')) {
       card.classList.toggle('active', card.dataset.themeOpt === settings.theme)
     }
@@ -1150,6 +1192,10 @@
       btn.classList.toggle('active', btn.dataset.spreadOpt === settings.spread)
     }
   }
+
+  window.addEventListener('resize', () => {
+    syncAppearanceUI()
+  })
 
   function applySettings(next, persist = false) {
     settings = { ...settings, ...next }
@@ -1179,8 +1225,8 @@
       view.renderer.setStyles?.(css)
       view.renderer.setAttribute?.('max-inline-size', `${Math.round(settings.contentWidth)}px`)
       view.renderer.setAttribute?.('max-column-count', settings.spread === 'none' ? '1' : '2')
-      view.renderer.setAttribute?.('gap', settings.spread === 'none' ? '6%' : '7%')
-      view.renderer.setAttribute?.('margin', '30px')
+      view.renderer.setAttribute?.('gap', `${GAP_PERCENT}%`)
+      view.renderer.setAttribute?.('margin', '26px')
       view.renderer.setAttribute?.('animated', '')
     }
 
@@ -1310,10 +1356,18 @@
     updateSetting({ lineHeight: Math.max(1.2, +(settings.lineHeight - 0.1).toFixed(2)) })
   document.getElementById('set-line-inc').onclick = () =>
     updateSetting({ lineHeight: Math.min(2.4, +(settings.lineHeight + 0.1).toFixed(2)) })
-  document.getElementById('set-width-dec').onclick = () =>
-    updateSetting({ contentWidth: Math.max(520, settings.contentWidth - 40) })
-  document.getElementById('set-width-inc').onclick = () =>
-    updateSetting({ contentWidth: Math.min(960, settings.contentWidth + 40) })
+  document.getElementById('set-width-dec').onclick = () => {
+    const minW = getMinContentWidth()
+    const current = getEffectiveContentWidth()
+    if (current <= minW) return
+    updateSetting({ contentWidth: Math.max(minW, current - 40) })
+  }
+  document.getElementById('set-width-inc').onclick = () => {
+    const maxW = getMaxContentWidth()
+    const current = getEffectiveContentWidth()
+    if (current >= maxW) return
+    updateSetting({ contentWidth: Math.min(maxW, current + 40) })
+  }
   document.getElementById('set-letter-dec').onclick = () =>
     updateSetting({ letterSpacing: Math.max(0, +(settings.letterSpacing - 0.01).toFixed(2)) })
   document.getElementById('set-letter-inc').onclick = () =>
