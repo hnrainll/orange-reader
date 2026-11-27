@@ -307,8 +307,15 @@ fn open_reader_for_entry(
     let server = start_server(Some(bytes), Some(session));
     let title = entry.title.clone();
     let book_id = entry.id;
+    let window_bounds = if self_test {
+        WindowBounds::centered(size(px(1140.), px(780.)), cx)
+    } else if let Some(display) = cx.primary_display() {
+        WindowBounds::Windowed(display.visible_bounds())
+    } else {
+        WindowBounds::centered(size(px(1140.), px(780.)), cx)
+    };
     let options = WindowOptions {
-        window_bounds: Some(WindowBounds::centered(size(px(1140.), px(780.)), cx)),
+        window_bounds: Some(window_bounds),
         titlebar: Some(TitlebarOptions {
             title: Some(title.into()),
             appears_transparent: true,
