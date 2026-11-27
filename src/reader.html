@@ -1629,10 +1629,14 @@
       })
       const location = session?.location
       try {
-        await view.init({ lastLocation: location ?? 0, showTextStart: false })
+        if (location) {
+          await view.init({ lastLocation: location, showTextStart: false })
+        } else {
+          await view.goTo(getCoverTarget())
+        }
       } catch (error) {
-        console.warn('无法恢复阅读位置，从开头打开', error)
-        await view.init({ lastLocation: 0, showTextStart: false })
+        console.warn('无法恢复阅读位置，从封面打开', error)
+        await view.goTo(getCoverTarget())
       }
       if (savedAnnotations.length) {
         await Promise.all(savedAnnotations.map(annotation =>

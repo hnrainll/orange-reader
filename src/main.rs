@@ -463,6 +463,7 @@ impl HistoryView {
             self.error = Some(format!("移出历史失败：{error}"));
         } else {
             self.error = None;
+            cx.global_mut::<AppState>().open_books.remove(&id);
         }
         self.reload(cx);
     }

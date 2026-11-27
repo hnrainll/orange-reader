@@ -115,6 +115,7 @@ impl Store {
                 cfi TEXT,
                 fraction REAL NOT NULL DEFAULT 0,
                 chapter_title TEXT,
+                hidden INTEGER NOT NULL DEFAULT 0,
                 last_opened_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
             );
@@ -137,12 +138,23 @@ impl Store {
                 value TEXT NOT NULL
             );",
         )?;
+        let has_hidden: bool = conn
+            .prepare("PRAGMA table_info(reading_history)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .any(|col| col == "hidden");
+        if !has_hidden {
+            conn.execute(
+                "ALTER TABLE reading_history ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
         Ok(Self { conn, root })
     }
 
     pub fn history(&self) -> Result<Vec<HistoryEntry>> {
         let mut stmt = self.conn.prepare(&format!(
-            "{HISTORY_SELECT} ORDER BY last_opened_at DESC, id DESC"
+            "{HISTORY_SELECT} WHERE hidden=0 ORDER BY last_opened_at DESC, id DESC"
         ))?;
         let rows = stmt.query_map([], map_history_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -196,7 +208,7 @@ impl Store {
             };
             self.conn.execute(
                 "UPDATE reading_history
-                 SET file_path=?2, title=?3, author=?4, cover_path=?5,
+                 SET file_path=?2, title=?3, author=?4, cover_path=?5, hidden=0,
                      last_opened_at=datetime('now', 'localtime')
                  WHERE id=?1",
                 params![
@@ -229,7 +241,7 @@ impl Store {
                 .or(existing.cover_path);
             self.conn.execute(
                 "UPDATE reading_history
-                 SET file_hash=?2, author=?3, cover_path=?4,
+                 SET file_hash=?2, author=?3, cover_path=?4, hidden=0,
                      last_opened_at=datetime('now', 'localtime')
                  WHERE id=?1",
                 params![
@@ -291,7 +303,7 @@ impl Store {
         self.conn.execute(
             "UPDATE reading_history
              SET file_hash=?2, file_path=?3, title=?4, author=?5,
-                 cover_path=COALESCE(?6, cover_path),
+                 cover_path=COALESCE(?6, cover_path), hidden=0,
                  last_opened_at=datetime('now', 'localtime')
              WHERE id=?1",
             params![
@@ -306,14 +318,33 @@ impl Store {
         self.get_entry(id)?.context("无法读取重新定位后的历史记录")
     }
 
-    /// Remove a record from reading history. Never deletes the user's EPUB file on disk.
+    /// Hide a book from the Recent Reading list and clear its cached cover,
+    /// while preserving reading progress and annotations for when it is opened again.
+    /// Never deletes the user's EPUB file on disk.
     pub fn remove_history(&self, id: i64) -> Result<()> {
         let entry = self.get_entry(id)?;
-        self.conn
-            .execute("DELETE FROM reading_history WHERE id=?1", [id])?;
-        if let Some(cover) = entry.and_then(|e| e.cover_path) {
-            if cover.starts_with(self.root.join("covers")) {
-                let _ = fs::remove_file(cover);
+        self.conn.execute(
+            "UPDATE reading_history SET hidden=1, cover_path=NULL WHERE id=?1",
+            [id],
+        )?;
+        let covers_dir = self.root.join("covers");
+        if let Some(entry) = entry {
+            if let Some(cover) = entry.cover_path {
+                if cover.starts_with(&covers_dir) {
+                    let _ = fs::remove_file(cover);
+                }
+            }
+            let prefix = format!("{}.", entry.file_hash);
+            if let Ok(entries) = fs::read_dir(&covers_dir) {
+                for file in entries.flatten() {
+                    if file
+                        .file_name()
+                        .to_str()
+                        .is_some_and(|name| name.starts_with(&prefix))
+                    {
+                        let _ = fs::remove_file(file.path());
+                    }
+                }
             }
         }
         Ok(())
@@ -466,13 +497,27 @@ mod tests {
             .recolor_annotation(reopened.id, cfi, "#86EFAC")
             .unwrap();
         assert_eq!(store.annotations(reopened.id).unwrap()[0].color, "#86EFAC");
-        store.delete_annotation(reopened.id, cfi).unwrap();
-        assert!(store.annotations(reopened.id).unwrap().is_empty());
 
-        // Removing history must NOT delete the user's EPUB on disk
+        // Hiding from history clears cached cover & hides from list,
+        // but keeps progress, annotations, and the user's EPUB on disk.
+        let cached_cover = reopened.cover_path.clone().unwrap();
+        assert!(cached_cover.exists());
         store.remove_history(reopened.id).unwrap();
         assert!(store.history().unwrap().is_empty());
+        assert!(!cached_cover.exists());
         assert!(path_b.exists());
+
+        // Re-opening brings the book back to history with fresh cover, progress, and annotations intact.
+        let restored = store.record_open(&path_b, bytes, &epub).unwrap();
+        assert_eq!(restored.id, reopened.id);
+        assert_eq!(restored.cfi.as_deref(), Some(cfi));
+        assert_eq!(restored.fraction, 0.42);
+        assert!(restored.cover_path.as_ref().is_some_and(|p| p.exists()));
+        assert_eq!(store.history().unwrap().len(), 1);
+        assert_eq!(store.annotations(restored.id).unwrap().len(), 1);
+
+        store.delete_annotation(restored.id, cfi).unwrap();
+        assert!(store.annotations(restored.id).unwrap().is_empty());
 
         let _ = fs::remove_dir_all(&root);
     }
