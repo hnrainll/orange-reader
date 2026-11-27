@@ -1,140 +1,970 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Orange Reader</title>
 <style>
-  body { margin: 0; font: 14px -apple-system, BlinkMacSystemFont, sans-serif; color: #31281f; background: #fffaf3; }
-  header { display: flex; gap: 10px; align-items: center; height: 34px; padding: 0 16px; border-bottom: 1px solid #eadfd2; box-sizing: border-box; }
-  button { border: 1px solid #d8c8b7; border-radius: 6px; background: white; padding: 6px 12px; cursor: pointer; }
-  #status { color: #74685c; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #reader { height: calc(100vh - 34px); }
-  #panel { display: none; position: absolute; z-index: 10; top: 34px; bottom: 0; left: 0;
-    width: min(340px, 80vw); overflow: auto; background: #fffaf3; border-right: 1px solid #eadfd2;
-    box-shadow: 3px 0 14px #0002; padding: 12px; box-sizing: border-box; }
-  #panel.open { display: block; }
-  #panel button { display: block; width: 100%; text-align: left; margin: 3px 0; }
-  #panel .nested { padding-left: 24px; }
-  #panel .note { border-bottom: 1px solid #eadfd2; padding: 8px 0; }
-  #panel .colors { display: flex; gap: 4px; }
-  #panel .colors button { width: 32px; height: 28px; flex: none; }
-  #selection-tools { display: none; position: absolute; z-index: 20; padding: 6px;
-    border: 1px solid #d8c8b7; border-radius: 8px; background: #fffaf3;
-    box-shadow: 0 4px 18px #0003; gap: 5px; }
-  #selection-tools.open { display: flex; }
-  #selection-tools button { width: 28px; height: 28px; padding: 0; }
-  foliate-view { display: block; width: 100%; height: 100%; }
-  body.dark { color: #f5f5f7; background: #1c1c1e; }
-  body.dark header { border-color: #403b37; }
-  body.dark #status { color: #a1a1a6; }
-  body.dark button { color: #f5f5f7; background: #302b28; border-color: #5b5148; }
-  body.dark #panel { color: #f5f5f7; background: #242426; border-color: #403b37; }
-  body.dark #selection-tools { background: #242426; border-color: #5b5148; }
+  :root,
+  html[data-theme="light"] {
+    --bg: #ffffff;
+    --surface: rgba(255, 255, 255, 0.86);
+    --popover: rgba(252, 252, 253, 0.94);
+    --control-bg: rgba(118, 118, 128, 0.11);
+    --control-active: #ffffff;
+    --ink: #1d1d1f;
+    --muted: #6e6e73;
+    --faint: #98989d;
+    --border: rgba(0, 0, 0, 0.08);
+    --border-strong: rgba(0, 0, 0, 0.14);
+    --hover: rgba(0, 0, 0, 0.055);
+    --accent: #007aff;
+    --accent-soft: rgba(0, 122, 255, 0.12);
+    --shadow-popover: 0 18px 46px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.08);
+    --shadow-drawer: 12px 0 36px rgba(0, 0, 0, 0.14);
+    --scrim: rgba(0, 0, 0, 0.16);
+    --spine: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.04) 48%, rgba(0, 0, 0, 0.07) 50%, rgba(0, 0, 0, 0.03) 53%, transparent 100%);
+    --book-bg: #ffffff;
+    --book-ink: #1d1d1f;
+    --book-link: #0066cc;
+  }
+
+  html[data-theme="sepia"] {
+    --bg: #f8f1e3;
+    --surface: rgba(248, 241, 227, 0.88);
+    --popover: rgba(247, 240, 226, 0.96);
+    --control-bg: rgba(96, 72, 46, 0.10);
+    --control-active: #fffbf2;
+    --ink: #3b2f23;
+    --muted: #7b6a58;
+    --faint: #a1907e;
+    --border: rgba(74, 55, 35, 0.11);
+    --border-strong: rgba(74, 55, 35, 0.18);
+    --hover: rgba(74, 55, 35, 0.07);
+    --accent: #b5651d;
+    --accent-soft: rgba(181, 101, 29, 0.14);
+    --shadow-popover: 0 18px 46px rgba(59, 47, 35, 0.18), 0 2px 8px rgba(59, 47, 35, 0.08);
+    --shadow-drawer: 12px 0 36px rgba(59, 47, 35, 0.16);
+    --scrim: rgba(45, 33, 20, 0.18);
+    --spine: linear-gradient(90deg, transparent 0%, rgba(74, 55, 35, 0.045) 48%, rgba(74, 55, 35, 0.085) 50%, rgba(74, 55, 35, 0.035) 53%, transparent 100%);
+    --book-bg: #f8f1e3;
+    --book-ink: #3b2f23;
+    --book-link: #9a5216;
+  }
+
+  html[data-theme="gray"] {
+    --bg: #49494c;
+    --surface: rgba(73, 73, 76, 0.88);
+    --popover: rgba(62, 62, 66, 0.95);
+    --control-bg: rgba(255, 255, 255, 0.12);
+    --control-active: rgba(255, 255, 255, 0.22);
+    --ink: #f0f0f3;
+    --muted: #c2c2c9;
+    --faint: #9898a0;
+    --border: rgba(255, 255, 255, 0.10);
+    --border-strong: rgba(255, 255, 255, 0.18);
+    --hover: rgba(255, 255, 255, 0.10);
+    --accent: #64b5f6;
+    --accent-soft: rgba(100, 181, 246, 0.18);
+    --shadow-popover: 0 20px 52px rgba(0, 0, 0, 0.36), 0 2px 10px rgba(0, 0, 0, 0.2);
+    --shadow-drawer: 12px 0 36px rgba(0, 0, 0, 0.30);
+    --scrim: rgba(0, 0, 0, 0.26);
+    --spine: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.12) 48%, rgba(0, 0, 0, 0.22) 50%, rgba(0, 0, 0, 0.09) 53%, transparent 100%);
+    --book-bg: #49494c;
+    --book-ink: #ededf0;
+    --book-link: #8ec8ff;
+  }
+
+  html[data-theme="dark"] {
+    --bg: #161618;
+    --surface: rgba(22, 22, 24, 0.88);
+    --popover: rgba(34, 34, 38, 0.95);
+    --control-bg: rgba(255, 255, 255, 0.10);
+    --control-active: rgba(255, 255, 255, 0.19);
+    --ink: #e8e8ed;
+    --muted: #98989f;
+    --faint: #68686f;
+    --border: rgba(255, 255, 255, 0.09);
+    --border-strong: rgba(255, 255, 255, 0.16);
+    --hover: rgba(255, 255, 255, 0.09);
+    --accent: #0a84ff;
+    --accent-soft: rgba(10, 132, 255, 0.20);
+    --shadow-popover: 0 22px 56px rgba(0, 0, 0, 0.56), 0 2px 10px rgba(0, 0, 0, 0.35);
+    --shadow-drawer: 12px 0 40px rgba(0, 0, 0, 0.50);
+    --scrim: rgba(0, 0, 0, 0.42);
+    --spine: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.24) 48%, rgba(0, 0, 0, 0.45) 50%, rgba(0, 0, 0, 0.18) 53%, transparent 100%);
+    --book-bg: #161618;
+    --book-ink: #e5e5ea;
+    --book-link: #5ac8fa;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body {
+    display: flex;
+    flex-direction: column;
+    font: 13px -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    transition: background-color 180ms ease, color 180ms ease;
+    user-select: none;
+  }
+
+  button {
+    font: inherit;
+    color: inherit;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    outline: none;
+  }
+
+  /* Apple Books Top Bar */
+  .topbar {
+    position: relative;
+    z-index: 30;
+    height: 46px;
+    padding: 0 14px;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    transition: background-color 180ms ease, border-color 180ms ease;
+  }
+  .topbar-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .topbar-group.right { justify-content: flex-end; }
+
+  .icon-btn {
+    height: 30px;
+    min-width: 32px;
+    padding: 0 8px;
+    border-radius: 7px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    color: var(--muted);
+    transition: background-color 140ms ease, color 140ms ease;
+  }
+  .icon-btn:hover { background: var(--hover); color: var(--ink); }
+  .icon-btn.active { background: var(--accent-soft); color: var(--accent); }
+  .icon-btn svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
+  .aa-label {
+    font-family: Georgia, "New York", "Songti SC", serif;
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1;
+  }
+  .badge {
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: var(--control-bg);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .badge:empty { display: none; }
+
+  .book-title {
+    max-width: min(46vw, 480px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--muted);
+    text-align: center;
+    letter-spacing: 0.01em;
+  }
+
+  /* Reading Stage */
+  .stage {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+  #reader {
+    width: 100%;
+    height: 100%;
+    position: relative;
+  }
+  foliate-view {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Subtle center book spine crease on wide two-page spread */
+  .spine-crease {
+    pointer-events: none;
+    position: absolute;
+    z-index: 4;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 44px;
+    transform: translateX(-50%);
+    background: var(--spine);
+    opacity: 0;
+    transition: opacity 200ms ease;
+  }
+  body.spread-active .spine-crease { opacity: 1; }
+  @media (max-width: 899px) {
+    body.spread-active .spine-crease { opacity: 0; }
+  }
+
+  /* Floating Apple Books Edge Chevrons */
+  .nav-edge {
+    position: absolute;
+    z-index: 12;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 38px;
+    height: 64px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    opacity: 0.16;
+    transition: opacity 180ms ease, background-color 180ms ease, color 180ms ease, transform 180ms ease;
+  }
+  .nav-edge.left { left: 10px; }
+  .nav-edge.right { right: 10px; }
+  .nav-edge:hover {
+    opacity: 1;
+    color: var(--ink);
+    background: var(--hover);
+  }
+  .nav-edge:active { transform: translateY(-50%) scale(0.95); }
+  .nav-edge svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* Minimal Footer & Scrubber */
+  .footer {
+    position: relative;
+    z-index: 20;
+    height: 36px;
+    padding: 0 24px 4px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    background: var(--bg);
+    transition: background-color 180ms ease;
+  }
+  .scrubber-wrap {
+    width: min(460px, 68vw);
+    height: 12px;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+  }
+  .scrubber-track {
+    position: relative;
+    width: 100%;
+    height: 2px;
+    border-radius: 999px;
+    background: var(--border-strong);
+    transition: height 140ms ease;
+  }
+  .scrubber-wrap:hover .scrubber-track,
+  .scrubber-wrap.dragging .scrubber-track {
+    height: 4px;
+  }
+  .scrubber-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 0%;
+    border-radius: 999px;
+    background: var(--muted);
+    transition: background-color 140ms ease;
+  }
+  .scrubber-wrap:hover .scrubber-fill,
+  .scrubber-wrap.dragging .scrubber-fill {
+    background: var(--accent);
+  }
+  .scrubber-thumb {
+    position: absolute;
+    top: 50%;
+    left: 0%;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+    transform: translate(-50%, -50%) scale(0);
+    transition: transform 140ms ease;
+  }
+  .scrubber-wrap:hover .scrubber-thumb,
+  .scrubber-wrap.dragging .scrubber-thumb {
+    transform: translate(-50%, -50%) scale(1);
+  }
+  #status {
+    max-width: 78vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11.5px;
+    color: var(--faint);
+    letter-spacing: 0.01em;
+  }
+
+  /* Backdrop Scrim */
+  #scrim {
+    display: none;
+    position: fixed;
+    z-index: 35;
+    inset: 46px 0 0 0;
+    background: var(--scrim);
+  }
+  #scrim.open { display: block; }
+
+  /* Apple Books Left Sidebar Drawer */
+  #panel {
+    position: fixed;
+    z-index: 40;
+    top: 46px;
+    bottom: 0;
+    left: 0;
+    width: min(330px, 84vw);
+    display: flex;
+    flex-direction: column;
+    background: var(--popover);
+    border-right: 1px solid var(--border);
+    box-shadow: var(--shadow-drawer);
+    backdrop-filter: blur(28px) saturate(180%);
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+    transform: translateX(-104%);
+    transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  #panel.open { transform: translateX(0); }
+
+  .panel-header {
+    padding: 12px 12px 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .segmented {
+    flex: 1;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    padding: 2px;
+    border-radius: 8px;
+    background: var(--control-bg);
+    gap: 2px;
+  }
+  .segmented button {
+    height: 26px;
+    border-radius: 6px;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--muted);
+    transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+  }
+  .segmented button.active {
+    background: var(--control-active);
+    color: var(--ink);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.10);
+  }
+
+  .panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 10px 20px;
+  }
+  .toc-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 10px;
+    border-radius: 7px;
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--ink);
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  .toc-item:hover { background: var(--hover); }
+  .toc-item.nested { padding-left: 24px; font-size: 12.5px; color: var(--muted); }
+  .toc-item.deep { padding-left: 38px; font-size: 12px; color: var(--muted); }
+  .toc-item.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .panel-empty {
+    padding: 40px 16px;
+    text-align: center;
+    color: var(--muted);
+    line-height: 1.6;
+    font-size: 13px;
+  }
+
+  .note {
+    position: relative;
+    margin: 8px 2px;
+    padding: 10px 12px 10px 14px;
+    border-radius: 10px;
+    background: var(--hover);
+    border: 1px solid var(--border);
+  }
+  .note::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    border-radius: 999px;
+    background: var(--note-color, #FFE066);
+  }
+  .note-jump {
+    display: block;
+    width: 100%;
+    text-align: left;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--ink);
+    margin-bottom: 8px;
+    user-select: text;
+  }
+  .note-jump:hover { color: var(--accent); }
+  .note-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .note-colors { display: flex; align-items: center; gap: 6px; }
+  .swatch-dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(0, 0, 0, 0.14);
+    transition: transform 120ms ease, box-shadow 120ms ease;
+  }
+  .swatch-dot:hover { transform: scale(1.14); }
+  .swatch-dot.active { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px var(--ink); }
+  .note-remove {
+    font-size: 12px;
+    color: var(--muted);
+    padding: 3px 7px;
+    border-radius: 6px;
+  }
+  .note-remove:hover { background: rgba(239, 68, 68, 0.14); color: #ef4444; }
+
+  /* Apple Books Floating Aa Appearance Popover */
+  #appearance-popover {
+    display: none;
+    position: fixed;
+    z-index: 45;
+    top: 52px;
+    right: 14px;
+    width: 312px;
+    padding: 14px;
+    border-radius: 14px;
+    background: var(--popover);
+    border: 1px solid var(--border-strong);
+    box-shadow: var(--shadow-popover);
+    backdrop-filter: blur(30px) saturate(180%);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    flex-direction: column;
+    gap: 14px;
+  }
+  #appearance-popover.open {
+    display: flex;
+    animation: popIn 140ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  @keyframes popIn {
+    from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  .pop-section { display: flex; flex-direction: column; gap: 8px; }
+  .pop-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 0.03em;
+  }
+
+  .font-size-bar {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    height: 36px;
+    border-radius: 9px;
+    background: var(--control-bg);
+    overflow: hidden;
+  }
+  .font-size-bar button {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ink);
+    font-family: Georgia, "New York", serif;
+    transition: background-color 120ms ease;
+  }
+  .font-size-bar button:hover { background: var(--hover); }
+  .font-size-bar .small-a { font-size: 13px; }
+  .font-size-bar .big-a { font-size: 19px; }
+  .font-size-val {
+    padding: 0 12px;
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    height: 20px;
+    display: flex;
+    align-items: center;
+  }
+
+  .theme-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+  .theme-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    padding: 8px 4px 7px;
+    border-radius: 10px;
+    border: 1.5px solid var(--border-strong);
+    transition: transform 120ms ease, border-color 140ms ease, box-shadow 140ms ease;
+  }
+  .theme-card:hover { transform: translateY(-1px); }
+  .theme-card.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+  }
+  .theme-card .preview {
+    font-family: Georgia, "Songti SC", serif;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.1;
+  }
+  .theme-card .name { font-size: 11px; opacity: 0.85; }
+  .theme-card[data-theme-opt="light"] { background: #ffffff; color: #1d1d1f; }
+  .theme-card[data-theme-opt="sepia"] { background: #f8f1e3; color: #3b2f23; }
+  .theme-card[data-theme-opt="gray"]  { background: #49494c; color: #f0f0f3; }
+  .theme-card[data-theme-opt="dark"]  { background: #161618; color: #e8e8ed; }
+
+  .stepper-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 2px;
+    border-top: 1px solid var(--border);
+  }
+  .stepper-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12.5px;
+    color: var(--ink);
+  }
+  .stepper {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 7px;
+    background: var(--control-bg);
+    overflow: hidden;
+  }
+  .stepper button {
+    width: 28px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: var(--ink);
+  }
+  .stepper button:hover { background: var(--hover); }
+  .stepper span {
+    min-width: 52px;
+    text-align: center;
+    font-size: 11.5px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .pop-reset {
+    align-self: center;
+    font-size: 12px;
+    color: var(--muted);
+    padding: 4px 10px;
+    border-radius: 6px;
+  }
+  .pop-reset:hover { color: var(--accent); background: var(--accent-soft); }
+
+  /* Apple Books Floating Selection Pill */
+  #selection-tools {
+    display: none;
+    position: fixed;
+    z-index: 50;
+    padding: 7px 10px;
+    border-radius: 999px;
+    background: var(--popover);
+    border: 1px solid var(--border-strong);
+    box-shadow: var(--shadow-popover);
+    backdrop-filter: blur(26px) saturate(180%);
+    -webkit-backdrop-filter: blur(26px) saturate(180%);
+    align-items: center;
+    gap: 7px;
+  }
+  #selection-tools.open {
+    display: flex;
+    animation: popIn 120ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .sel-swatch {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(0, 0, 0, 0.14);
+    transition: transform 110ms ease;
+  }
+  .sel-swatch:hover { transform: scale(1.16); }
+  .sel-swatch.active { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px var(--ink); }
+  .sel-divider { width: 1px; height: 16px; background: var(--border-strong); margin: 0 1px; }
+  .sel-action {
+    height: 24px;
+    padding: 0 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    color: var(--ink);
+  }
+  .sel-action:hover { background: var(--hover); }
+  .sel-action.danger:hover { background: rgba(239, 68, 68, 0.14); color: #ef4444; }
 </style>
-<header>
-  <span id="status">正在载入…</span>
+
+<header class="topbar">
+  <div class="topbar-group left">
+    <button id="btn-toc" class="icon-btn" title="目录与高亮 (⇧⌘T)" aria-label="目录">
+      <svg viewBox="0 0 24 24"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/></svg>
+    </button>
+    <button id="btn-history" class="icon-btn" title="最近阅读 (⇧⌘O)" aria-label="最近阅读">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+    </button>
+    <button id="btn-open" class="icon-btn" title="打开 EPUB… (⌘O)" aria-label="打开">
+      <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+    </button>
+  </div>
+
+  <div id="book-title" class="book-title">Orange Reader</div>
+
+  <div class="topbar-group right">
+    <button id="btn-notes" class="icon-btn" title="高亮列表 (⇧⌘N)" aria-label="高亮">
+      <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+      <span id="notes-badge" class="badge"></span>
+    </button>
+    <button id="btn-appearance" class="icon-btn" title="外观与排版 (⇧⌘A)" aria-label="外观与排版">
+      <span class="aa-label">Aa</span>
+    </button>
+  </div>
 </header>
-<main id="reader"></main>
-<aside id="panel"></aside>
+
+<div class="stage">
+  <main id="reader"></main>
+  <div class="spine-crease" aria-hidden="true"></div>
+  <button id="nav-prev" class="nav-edge left" title="上一页 (←)" aria-label="上一页">
+    <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+  </button>
+  <button id="nav-next" class="nav-edge right" title="下一页 (→)" aria-label="下一页">
+    <svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+  </button>
+</div>
+
+<footer class="footer">
+  <div id="scrubber" class="scrubber-wrap" title="拖动或点击跳转进度">
+    <div class="scrubber-track">
+      <div id="scrubber-fill" class="scrubber-fill"></div>
+      <div id="scrubber-thumb" class="scrubber-thumb"></div>
+    </div>
+  </div>
+  <span id="status">正在载入…</span>
+</footer>
+
+<div id="scrim"></div>
+
+<aside id="panel" aria-label="目录与高亮">
+  <div class="panel-header">
+    <div class="segmented">
+      <button id="tab-toc" class="active">目录</button>
+      <button id="tab-notes">高亮</button>
+    </div>
+    <button id="btn-close-panel" class="icon-btn" title="关闭 (Esc)" aria-label="关闭">
+      <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <div id="panel-body" class="panel-body"></div>
+</aside>
+
+<div id="appearance-popover" role="dialog" aria-label="外观与排版">
+  <div class="pop-section">
+    <div class="font-size-bar">
+      <button id="set-font-dec" class="small-a" title="减小字号">A</button>
+      <span id="val-font-size" class="font-size-val">18px</span>
+      <button id="set-font-inc" class="big-a" title="增大字号">A</button>
+    </div>
+  </div>
+
+  <div class="pop-section">
+    <span class="pop-label">主题</span>
+    <div class="theme-grid">
+      <button class="theme-card" data-theme-opt="light"><span class="preview">Aa</span><span class="name">纸白</span></button>
+      <button class="theme-card" data-theme-opt="sepia"><span class="preview">Aa</span><span class="name">暖纸</span></button>
+      <button class="theme-card" data-theme-opt="gray"><span class="preview">Aa</span><span class="name">柔灰</span></button>
+      <button class="theme-card" data-theme-opt="dark"><span class="preview">Aa</span><span class="name">夜间</span></button>
+    </div>
+  </div>
+
+  <div class="pop-section">
+    <span class="pop-label">字体</span>
+    <div class="segmented" id="font-family-seg">
+      <button data-font-opt="original">原版</button>
+      <button data-font-opt="serif">宋体</button>
+      <button data-font-opt="sans-serif">黑体</button>
+    </div>
+  </div>
+
+  <div class="pop-section">
+    <span class="pop-label">页面布局</span>
+    <div class="segmented" id="spread-seg">
+      <button data-spread-opt="auto">双页跨页</button>
+      <button data-spread-opt="none">单页居中</button>
+    </div>
+  </div>
+
+  <div class="stepper-list">
+    <div class="stepper-row">
+      <span>行距</span>
+      <div class="stepper">
+        <button id="set-line-dec">−</button>
+        <span id="val-line-height">1.65</span>
+        <button id="set-line-inc">+</button>
+      </div>
+    </div>
+    <div class="stepper-row">
+      <span>页宽</span>
+      <div class="stepper">
+        <button id="set-width-dec">−</button>
+        <span id="val-content-width">720px</span>
+        <button id="set-width-inc">+</button>
+      </div>
+    </div>
+    <div class="stepper-row">
+      <span>字距</span>
+      <div class="stepper">
+        <button id="set-letter-dec">−</button>
+        <span id="val-letter-spacing">0.00em</span>
+        <button id="set-letter-inc">+</button>
+      </div>
+    </div>
+    <div class="stepper-row">
+      <span>段距</span>
+      <div class="stepper">
+        <button id="set-para-dec">−</button>
+        <span id="val-para-spacing">1.0em</span>
+        <button id="set-para-inc">+</button>
+      </div>
+    </div>
+  </div>
+
+  <button id="btn-reset-settings" class="pop-reset">恢复默认排版</button>
+</div>
+
 <div id="selection-tools"></div>
+
 <script type="module">
   import '/foliate-js/view.js'
   import { Overlayer } from '/foliate-js/overlayer.js'
 
   const status = document.getElementById('status')
+  const bookTitleEl = document.getElementById('book-title')
   const reader = document.getElementById('reader')
   const panel = document.getElementById('panel')
+  const panelBody = document.getElementById('panel-body')
+  const scrim = document.getElementById('scrim')
   const selectionTools = document.getElementById('selection-tools')
-  let panelKind = null
+  const appearancePopover = document.getElementById('appearance-popover')
+  const btnToc = document.getElementById('btn-toc')
+  const btnNotes = document.getElementById('btn-notes')
+  const btnAppearance = document.getElementById('btn-appearance')
+  const notesBadge = document.getElementById('notes-badge')
+  const tabToc = document.getElementById('tab-toc')
+  const tabNotes = document.getElementById('tab-notes')
+  const scrubber = document.getElementById('scrubber')
+  const scrubberFill = document.getElementById('scrubber-fill')
+  const scrubberThumb = document.getElementById('scrubber-thumb')
+
   const colors = ['#FFE066', '#86EFAC', '#93C5FD', '#F9A8D4', '#FCA5A5']
+  const defaultSettings = {
+    fontSize: 18,
+    lineHeight: 1.65,
+    contentWidth: 720,
+    letterSpacing: 0,
+    paragraphSpacing: 1,
+    fontFamily: 'original',
+    theme: 'light',
+    spread: 'auto',
+  }
+  const themePalette = {
+    light: { bg: '#ffffff', ink: '#1d1d1f', link: '#0066cc' },
+    sepia: { bg: '#f8f1e3', ink: '#3b2f23', link: '#9a5216' },
+    gray:  { bg: '#49494c', ink: '#ededf0', link: '#8ec8ff' },
+    dark:  { bg: '#161618', ink: '#e5e5ea', link: '#5ac8fa' },
+  }
+
   let managed = false
+  let view
+  let panelKind = null
+  let currentTocHref = null
+  let lastSelection
+  let lastLocation
+  let savedAnnotations = []
+  let settings = { ...defaultSettings }
+
   const report = (kind, detail = {}) => {
     const message = JSON.stringify({ kind, managed, ...detail })
     window.ipc?.postMessage(message)
     console.log('reader event:', message)
   }
 
-  let view
-  let lastSelection
-  let lastLocation
-  let savedAnnotations = []
-  function hideSelectionTools() { selectionTools.classList.remove('open') }
-  function showSelectionTools(doc, range, cfi, text) {
-    lastSelection = { cfi, text }
-    selectionTools.replaceChildren()
-    for (const color of colors) {
-      const button = document.createElement('button')
-      button.style.backgroundColor = color
-      button.title = '高亮文字'
-      button.onmousedown = event => event.preventDefault()
-      button.onclick = () => highlightSelection(color)
-      selectionTools.append(button)
-    }
-    if (savedAnnotations.some(item => item.cfi === cfi)) {
-      const remove = document.createElement('button')
-      remove.textContent = '×'
-      remove.title = '删除高亮'
-      remove.onclick = () => deleteHighlight(cfi)
-      selectionTools.append(remove)
-    }
-    const frame = doc.defaultView?.frameElement
-    const frameRect = frame?.getBoundingClientRect()
-    const rangeRect = range?.getBoundingClientRect()
-    const x = (frameRect?.left || 0) + (rangeRect?.left || 0)
-    const y = (frameRect?.top || 0) + (rangeRect?.top || 0) - 46
-    selectionTools.style.left = `${Math.max(8, Math.min(window.innerWidth - 190, x))}px`
-    selectionTools.style.top = `${Math.max(8, y)}px`
-    selectionTools.classList.add('open')
+  function updateNotesBadge() {
+    notesBadge.textContent = savedAnnotations.length ? String(savedAnnotations.length) : ''
+    tabNotes.textContent = savedAnnotations.length ? `高亮 (${savedAnnotations.length})` : '高亮'
   }
-  async function deleteHighlight(cfi) {
-    await view?.deleteAnnotation({ value: cfi })
-    savedAnnotations = savedAnnotations.filter(item => item.cfi !== cfi)
-    report('annotation-delete', { cfi })
-    hideSelectionTools()
-    if (panelKind === 'notes') renderPanel()
+
+  function hideSelectionTools() {
+    selectionTools.classList.remove('open')
   }
-  function closePanel() { panel.classList.remove('open'); panelKind = null }
+
+  function closeAppearance() {
+    appearancePopover.classList.remove('open')
+    btnAppearance.classList.remove('active')
+  }
+
+  function toggleAppearance() {
+    const opening = !appearancePopover.classList.contains('open')
+    if (opening) {
+      closePanel()
+      hideSelectionTools()
+      appearancePopover.classList.add('open')
+      btnAppearance.classList.add('active')
+      syncAppearanceUI()
+    } else {
+      closeAppearance()
+    }
+  }
+
+  function closePanel() {
+    panel.classList.remove('open')
+    scrim.classList.remove('open')
+    btnToc.classList.remove('active')
+    btnNotes.classList.remove('active')
+    panelKind = null
+  }
+
   function showPanel(kind) {
-    if (panelKind === kind) { closePanel(); return }
+    if (panelKind === kind) {
+      closePanel()
+      return
+    }
+    closeAppearance()
+    hideSelectionTools()
     panelKind = kind
     panel.classList.add('open')
+    scrim.classList.add('open')
+    btnToc.classList.toggle('active', kind === 'toc')
+    btnNotes.classList.toggle('active', kind === 'notes')
+    tabToc.classList.toggle('active', kind === 'toc')
+    tabNotes.classList.toggle('active', kind === 'notes')
     renderPanel()
   }
+
   function renderPanel() {
-    panel.replaceChildren()
-    const heading = document.createElement('h3')
-    heading.textContent = panelKind === 'toc' ? '目录' : '高亮'
-    panel.append(heading)
+    panelBody.replaceChildren()
     if (panelKind === 'toc') {
+      const toc = view?.book?.toc || []
+      if (!toc.length) {
+        const empty = document.createElement('div')
+        empty.className = 'panel-empty'
+        empty.textContent = '本书未提供目录。'
+        panelBody.append(empty)
+        return
+      }
       const addItems = (items, depth = 0) => {
         for (const item of items || []) {
           const button = document.createElement('button')
-          button.textContent = item.label || item.href || '未命名章节'
-          if (depth) button.classList.add('nested')
-          button.onclick = () => { view?.goTo(item.href); closePanel() }
-          panel.append(button)
+          button.className = 'toc-item'
+          if (depth === 1) button.classList.add('nested')
+          else if (depth >= 2) button.classList.add('deep')
+          if (currentTocHref && item.href === currentTocHref) button.classList.add('active')
+          button.textContent = item.label?.trim() || item.href || '未命名章节'
+          button.onclick = () => {
+            view?.goTo(item.href)
+            closePanel()
+          }
+          panelBody.append(button)
           addItems(item.subitems, depth + 1)
         }
       }
-      addItems(view?.book?.toc)
+      addItems(toc)
     } else if (panelKind === 'notes') {
       if (!savedAnnotations.length) {
-        const empty = document.createElement('p')
-        empty.textContent = '暂无高亮。在书页中选中文字即可添加。'
-        panel.append(empty)
+        const empty = document.createElement('div')
+        empty.className = 'panel-empty'
+        empty.textContent = '暂无高亮。\n在书页中拖动选中文字即可添加高亮。'
+        panelBody.append(empty)
         return
       }
       for (const annotation of savedAnnotations) {
-        const row = document.createElement('div')
-        row.className = 'note'
+        const card = document.createElement('div')
+        card.className = 'note'
+        card.style.setProperty('--note-color', annotation.color)
+
         const jump = document.createElement('button')
+        jump.className = 'note-jump'
         jump.textContent = annotation.text || annotation.cfi
-        jump.onclick = () => { view?.goTo(annotation.cfi); closePanel() }
-        row.append(jump)
+        jump.onclick = () => {
+          view?.goTo(annotation.cfi)
+          closePanel()
+        }
+        card.append(jump)
+
+        const footer = document.createElement('div')
+        footer.className = 'note-footer'
+
         const swatches = document.createElement('div')
-        swatches.className = 'colors'
+        swatches.className = 'note-colors'
         for (const color of colors) {
           const button = document.createElement('button')
+          button.className = 'swatch-dot'
+          if (annotation.color === color) button.classList.add('active')
           button.style.backgroundColor = color
           button.title = '更改高亮颜色'
           button.onclick = async () => {
@@ -145,41 +975,294 @@
           }
           swatches.append(button)
         }
-        row.append(swatches)
+        footer.append(swatches)
+
         const remove = document.createElement('button')
-        remove.textContent = '删除高亮'
+        remove.className = 'note-remove'
+        remove.dataset.deleteNote = '1'
+        remove.textContent = '删除'
         remove.onclick = () => deleteHighlight(annotation.cfi)
-        row.append(remove)
-        panel.append(row)
+        footer.append(remove)
+
+        card.append(footer)
+        panelBody.append(card)
       }
     }
   }
-  let settings = { fontSize: 18, lineHeight: 1.6, contentWidth: 720,
-    letterSpacing: 0, paragraphSpacing: 1, fontFamily: 'original', dark: false }
-  function applySettings(next) {
-    settings = { ...settings, ...next }
-    document.body.classList.toggle('dark', settings.dark)
-    if (!view?.renderer) return
-    const css = `html, body {
-      font-size: ${settings.fontSize}px !important;
-      line-height: ${settings.lineHeight} !important;
-      letter-spacing: ${settings.letterSpacing}em !important;
-      -webkit-text-size-adjust: none;
-      text-size-adjust: none;
-      ${settings.dark ? 'background-color: #1c1c1e !important; color: #f5f5f7 !important;' : ''}
+
+  function showSelectionTools(doc, range, cfi, text) {
+    lastSelection = { cfi, text }
+    const existing = savedAnnotations.find(item => item.cfi === cfi)
+    selectionTools.replaceChildren()
+
+    for (const color of colors) {
+      const button = document.createElement('button')
+      button.className = 'sel-swatch'
+      button.dataset.swatch = color
+      if (existing?.color === color) button.classList.add('active')
+      button.style.backgroundColor = color
+      button.title = '高亮文字'
+      button.onmousedown = event => event.preventDefault()
+      button.onclick = () => highlightSelection(color)
+      selectionTools.append(button)
     }
-    ${settings.fontFamily === 'original' ? '' : `html, body { font-family: ${settings.fontFamily === 'serif' ? 'Georgia, "Songti SC", serif' : '-apple-system, "PingFang SC", sans-serif'} !important; }`}
-    p, li, blockquote { margin-bottom: ${settings.paragraphSpacing}em !important; }`
-    view.renderer.setStyles?.(css)
-    view.renderer.setAttribute?.('max-inline-size', `${settings.contentWidth}px`)
+
+    const divider = document.createElement('span')
+    divider.className = 'sel-divider'
+    selectionTools.append(divider)
+
+    const copyBtn = document.createElement('button')
+    copyBtn.className = 'sel-action'
+    copyBtn.textContent = '复制'
+    copyBtn.onmousedown = event => event.preventDefault()
+    copyBtn.onclick = () => {
+      navigator.clipboard?.writeText(text).catch(() => {})
+      hideSelectionTools()
+    }
+    selectionTools.append(copyBtn)
+
+    if (existing) {
+      const remove = document.createElement('button')
+      remove.className = 'sel-action danger'
+      remove.textContent = '删除'
+      remove.onmousedown = event => event.preventDefault()
+      remove.onclick = () => deleteHighlight(cfi)
+      selectionTools.append(remove)
+    }
+
+    const frame = doc.defaultView?.frameElement
+    const frameRect = frame?.getBoundingClientRect()
+    const rangeRect = range?.getBoundingClientRect()
+    const rawX = (frameRect?.left || 0) + (rangeRect?.left || 0) + ((rangeRect?.width || 0) / 2)
+    const topY = (frameRect?.top || 0) + (rangeRect?.top || 0) - 50
+    const bottomY = (frameRect?.top || 0) + (rangeRect?.bottom || 0) + 10
+    const pillWidth = existing ? 268 : 220
+    const left = Math.max(12, Math.min(window.innerWidth - pillWidth - 12, rawX - pillWidth / 2))
+    const top = topY >= 52 ? topY : Math.min(window.innerHeight - 54, bottomY)
+    selectionTools.style.left = `${left}px`
+    selectionTools.style.top = `${top}px`
+    selectionTools.classList.add('open')
+  }
+
+  async function deleteHighlight(cfi) {
+    await view?.deleteAnnotation({ value: cfi })
+    savedAnnotations = savedAnnotations.filter(item => item.cfi !== cfi)
+    updateNotesBadge()
+    report('annotation-delete', { cfi })
+    hideSelectionTools()
+    if (panelKind === 'notes') renderPanel()
+  }
+
+  async function highlightSelection(color = '#FFE066') {
+    if (!view || !lastSelection?.cfi) {
+      report('highlight-error', { message: '请先在书页里选中文字' })
+      return
+    }
+    try {
+      if (!colors.includes(color)) return
+      const existing = savedAnnotations.find(item => item.cfi === lastSelection.cfi)
+      await view.addAnnotation({
+        value: lastSelection.cfi,
+        color,
+        type: existing?.type || 'highlight',
+      })
+      if (existing) {
+        existing.color = color
+        report('annotation-color', { cfi: existing.cfi, color })
+      } else {
+        savedAnnotations.push({
+          cfi: lastSelection.cfi,
+          color,
+          type: 'highlight',
+          text: lastSelection.text,
+        })
+        report('highlight', { ...lastSelection, color })
+      }
+      updateNotesBadge()
+      hideSelectionTools()
+      if (panelKind === 'notes') renderPanel()
+    } catch (error) {
+      report('highlight-error', { message: String(error) })
+    }
+  }
+
+  function syncAppearanceUI() {
+    document.getElementById('val-font-size').textContent = `${Math.round(settings.fontSize)}px`
+    document.getElementById('val-line-height').textContent = settings.lineHeight.toFixed(2)
+    document.getElementById('val-content-width').textContent = `${Math.round(settings.contentWidth)}px`
+    document.getElementById('val-letter-spacing').textContent = `${settings.letterSpacing.toFixed(2)}em`
+    document.getElementById('val-para-spacing').textContent = `${settings.paragraphSpacing.toFixed(1)}em`
+    for (const card of document.querySelectorAll('[data-theme-opt]')) {
+      card.classList.toggle('active', card.dataset.themeOpt === settings.theme)
+    }
+    for (const btn of document.querySelectorAll('[data-font-opt]')) {
+      btn.classList.toggle('active', btn.dataset.fontOpt === settings.fontFamily)
+    }
+    for (const btn of document.querySelectorAll('[data-spread-opt]')) {
+      btn.classList.toggle('active', btn.dataset.spreadOpt === settings.spread)
+    }
+  }
+
+  function applySettings(next, persist = false) {
+    settings = { ...settings, ...next }
+    if (!themePalette[settings.theme]) settings.theme = 'light'
+    document.documentElement.dataset.theme = settings.theme
+    document.body.classList.toggle('spread-active', settings.spread === 'auto')
+    syncAppearanceUI()
+
+    if (view?.renderer) {
+      const palette = themePalette[settings.theme]
+      const fontRule = settings.fontFamily === 'original'
+        ? ''
+        : `html, body { font-family: ${settings.fontFamily === 'serif'
+            ? '"New York", Georgia, "Songti SC", "STSong", serif'
+            : '-apple-system, "SF Pro Text", "PingFang SC", sans-serif'} !important; }`
+      const css = `html, body {
+        font-size: ${settings.fontSize}px !important;
+        line-height: ${settings.lineHeight} !important;
+        letter-spacing: ${settings.letterSpacing}em !important;
+        background-color: ${palette.bg} !important;
+        color: ${palette.ink} !important;
+        -webkit-text-size-adjust: none;
+        text-size-adjust: none;
+      }
+      a:any-link { color: ${palette.link} !important; }
+      ${fontRule}
+      p, li, blockquote { margin-bottom: ${settings.paragraphSpacing}em !important; }`
+      view.renderer.setStyles?.(css)
+      view.renderer.setAttribute?.('max-inline-size', `${Math.round(settings.contentWidth)}px`)
+      view.renderer.setAttribute?.('max-column-count', settings.spread === 'none' ? '1' : '2')
+      view.renderer.setAttribute?.('gap', settings.spread === 'none' ? '6%' : '8%')
+      view.renderer.setAttribute?.('margin', '28px')
+      view.renderer.setAttribute?.('animated', '')
+    }
+
+    if (persist) report('settings', { settings })
     report('settings-applied', settings)
   }
-  window.applyReaderSettings = applySettings
+  window.applyReaderSettings = next => applySettings(next, false)
+
+  function updateSetting(patch) {
+    applySettings(patch, true)
+  }
+
+  function isEditableTarget(target) {
+    if (!target || !target.tagName) return false
+    const tag = target.tagName.toLowerCase()
+    return tag === 'input' || tag === 'textarea' || target.isContentEditable
+  }
+
+  function handleKeydown(event) {
+    if (event.key === 'Escape') {
+      if (appearancePopover.classList.contains('open')) closeAppearance()
+      if (panel.classList.contains('open')) closePanel()
+      hideSelectionTools()
+      return
+    }
+    if (event.metaKey || event.ctrlKey || event.altKey) return
+    if (isEditableTarget(event.target)) return
+
+    if (event.key === 'ArrowLeft' || event.key === 'PageUp' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      hideSelectionTools()
+      view?.goLeft()
+    } else if (event.key === 'ArrowRight' || event.key === 'PageDown' || event.key === 'ArrowDown') {
+      event.preventDefault()
+      hideSelectionTools()
+      view?.goRight()
+    } else if (event.key === ' ') {
+      event.preventDefault()
+      hideSelectionTools()
+      if (event.shiftKey) view?.goLeft()
+      else view?.goRight()
+    }
+  }
+  window.addEventListener('keydown', handleKeydown, true)
+
+  // Scrubber interaction
+  let scrubbing = false
+  function scrubToClientX(clientX, commit) {
+    const rect = scrubber.getBoundingClientRect()
+    const frac = Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)))
+    scrubberFill.style.width = `${frac * 100}%`
+    scrubberThumb.style.left = `${frac * 100}%`
+    if (commit) view?.goToFraction(frac)
+  }
+  scrubber.addEventListener('mousedown', event => {
+    scrubbing = true
+    scrubber.classList.add('dragging')
+    scrubToClientX(event.clientX, false)
+  })
+  window.addEventListener('mousemove', event => {
+    if (scrubbing) scrubToClientX(event.clientX, false)
+  })
+  window.addEventListener('mouseup', event => {
+    if (!scrubbing) return
+    scrubbing = false
+    scrubber.classList.remove('dragging')
+    scrubToClientX(event.clientX, true)
+  })
+
+  // Top bar & popover controls
+  btnToc.onclick = () => showPanel('toc')
+  btnNotes.onclick = () => showPanel('notes')
+  btnAppearance.onclick = toggleAppearance
+  document.getElementById('btn-history').onclick = () => report('show-history')
+  document.getElementById('btn-open').onclick = () => report('open-file')
+  document.getElementById('btn-close-panel').onclick = closePanel
+  tabToc.onclick = () => { if (panelKind !== 'toc') showPanel('toc') }
+  tabNotes.onclick = () => { if (panelKind !== 'notes') showPanel('notes') }
+  scrim.onclick = closePanel
+  document.getElementById('nav-prev').onclick = () => { hideSelectionTools(); view?.goLeft() }
+  document.getElementById('nav-next').onclick = () => { hideSelectionTools(); view?.goRight() }
+
+  document.addEventListener('mousedown', event => {
+    if (appearancePopover.classList.contains('open')
+      && !appearancePopover.contains(event.target)
+      && !btnAppearance.contains(event.target)) {
+      closeAppearance()
+    }
+  })
+
+  // Appearance controls
+  document.getElementById('set-font-dec').onclick = () =>
+    updateSetting({ fontSize: Math.max(12, settings.fontSize - 1) })
+  document.getElementById('set-font-inc').onclick = () =>
+    updateSetting({ fontSize: Math.min(32, settings.fontSize + 1) })
+  document.getElementById('set-line-dec').onclick = () =>
+    updateSetting({ lineHeight: Math.max(1.2, +(settings.lineHeight - 0.1).toFixed(2)) })
+  document.getElementById('set-line-inc').onclick = () =>
+    updateSetting({ lineHeight: Math.min(2.4, +(settings.lineHeight + 0.1).toFixed(2)) })
+  document.getElementById('set-width-dec').onclick = () =>
+    updateSetting({ contentWidth: Math.max(520, settings.contentWidth - 40) })
+  document.getElementById('set-width-inc').onclick = () =>
+    updateSetting({ contentWidth: Math.min(960, settings.contentWidth + 40) })
+  document.getElementById('set-letter-dec').onclick = () =>
+    updateSetting({ letterSpacing: Math.max(0, +(settings.letterSpacing - 0.01).toFixed(2)) })
+  document.getElementById('set-letter-inc').onclick = () =>
+    updateSetting({ letterSpacing: Math.min(0.1, +(settings.letterSpacing + 0.01).toFixed(2)) })
+  document.getElementById('set-para-dec').onclick = () =>
+    updateSetting({ paragraphSpacing: Math.max(0.5, +(settings.paragraphSpacing - 0.1).toFixed(1)) })
+  document.getElementById('set-para-inc').onclick = () =>
+    updateSetting({ paragraphSpacing: Math.min(2.4, +(settings.paragraphSpacing + 0.1).toFixed(1)) })
+  document.getElementById('btn-reset-settings').onclick = () =>
+    updateSetting({ ...defaultSettings })
+
+  for (const card of document.querySelectorAll('[data-theme-opt]')) {
+    card.onclick = () => updateSetting({ theme: card.dataset.themeOpt })
+  }
+  for (const btn of document.querySelectorAll('[data-font-opt]')) {
+    btn.onclick = () => updateSetting({ fontFamily: btn.dataset.fontOpt })
+  }
+  for (const btn of document.querySelectorAll('[data-spread-opt]')) {
+    btn.onclick = () => updateSetting({ spread: btn.dataset.spreadOpt })
+  }
+
   async function runSelfTest() {
     try {
       const toc = view.book?.toc || []
       showPanel('toc')
-      const tocCount = panel.querySelectorAll('button').length
+      const tocCount = panelBody.querySelectorAll('.toc-item').length
       if (toc.length < 2 || tocCount < 2) throw new Error('目录未载入')
       await view.goTo(toc[1].href)
       closePanel()
@@ -200,11 +1283,11 @@
         throw new Error('高亮创建失败')
 
       showSelectionTools(content.doc, range, cfi, range.toString())
-      await selectionTools.children[2].onclick()
+      await selectionTools.querySelector('[data-swatch="#93C5FD"]').onclick()
       if (savedAnnotations.find(item => item.cfi === cfi)?.color !== '#93C5FD')
         throw new Error('高亮改色失败')
       showPanel('notes')
-      const remove = panel.querySelector('.note > button:last-child')
+      const remove = panelBody.querySelector('[data-delete-note]')
       if (!remove) throw new Error('高亮列表未显示删除按钮')
       await remove.onclick()
       if (savedAnnotations.some(item => item.cfi === cfi)) throw new Error('高亮删除失败')
@@ -214,11 +1297,6 @@
       report('self-test-error', { message: String(error) })
     }
   }
-  function handleKeydown(event) {
-    if (event.key === 'ArrowLeft' || event.key === 'PageUp') view?.goLeft()
-    if (event.key === 'ArrowRight' || event.key === 'PageDown') view?.goRight()
-  }
-  window.addEventListener('keydown', handleKeydown)
 
   async function open(file, session = null) {
     view?.close?.()
@@ -230,12 +1308,16 @@
     lastLocation = undefined
     managed = session !== null
     savedAnnotations = session?.annotations || []
+    updateNotesBadge()
     const displayTitle = session?.title || file.name
+    bookTitleEl.textContent = displayTitle
+    document.title = displayTitle
     closePanel()
+    closeAppearance()
     hideSelectionTools()
     try {
       await view.open(file)
-      applySettings(session?.settings || {})
+      applySettings(session?.settings || {}, false)
       view.addEventListener('draw-annotation', event => {
         const { draw, annotation } = event.detail
         draw(annotation.type === 'underline' ? Overlayer.underline : Overlayer.highlight,
@@ -249,7 +1331,13 @@
       view.addEventListener('relocate', event => {
         const { fraction, cfi, tocItem } = event.detail
         const chapter = tocItem?.label?.trim() || null
-        status.textContent = `${displayTitle}${chapter ? ` · ${chapter}` : ''} · ${Math.round((fraction || 0) * 100)}%`
+        currentTocHref = tocItem?.href || null
+        const pct = Math.round((fraction || 0) * 100)
+        status.textContent = chapter ? `${chapter} · ${pct}%` : `已读 ${pct}%`
+        if (!scrubbing) {
+          scrubberFill.style.width = `${(fraction || 0) * 100}%`
+          scrubberThumb.style.left = `${(fraction || 0) * 100}%`
+        }
         const location = JSON.stringify({ fraction, cfi, chapter })
         if (location === lastLocation) return
         lastLocation = location
@@ -261,6 +1349,9 @@
           view.addAnnotation({ value: annotation.cfi, color: annotation.color, type: annotation.type })
             .catch(error => console.warn('无法恢复高亮', error))
         }
+        doc.addEventListener('mousedown', () => {
+          closeAppearance()
+        })
         doc.addEventListener('mouseup', () => {
           const selection = doc.getSelection()
           if (!selection || selection.isCollapsed || !selection.rangeCount) {
@@ -273,7 +1364,7 @@
           showSelectionTools(doc, selection.getRangeAt(0), cfi, text)
           report('selection', { text, cfi })
         })
-        doc.addEventListener('keydown', handleKeydown)
+        doc.addEventListener('keydown', handleKeydown, true)
       })
       const location = session?.location
       try {
@@ -289,6 +1380,7 @@
         report('annotations-restored', { count: savedAnnotations.length })
       }
       report('opened', { name: file.name })
+      window.focus()
       if (session?.selfTest) await runSelfTest()
       if (panelKind) renderPanel()
     } catch (error) {
@@ -297,34 +1389,12 @@
     }
   }
 
-  async function highlightSelection(color = '#FFE066') {
-    if (!view || !lastSelection?.cfi) {
-      report('highlight-error', { message: '请先在书页里选中文字' })
-      return
-    }
-    try {
-      if (!colors.includes(color)) return
-      const existing = savedAnnotations.find(item => item.cfi === lastSelection.cfi)
-      await view.addAnnotation({ value: lastSelection.cfi, color,
-        type: existing?.type || 'highlight' })
-      if (existing) {
-        existing.color = color
-        report('annotation-color', { cfi: existing.cfi, color })
-      } else {
-        savedAnnotations.push({ cfi: lastSelection.cfi, color, type: 'highlight', text: lastSelection.text })
-        report('highlight', { ...lastSelection, color })
-      }
-      hideSelectionTools()
-      if (panelKind === 'notes') renderPanel()
-    } catch (error) {
-      report('highlight-error', { message: String(error) })
-    }
-  }
   window.readerFromRust = command => {
-    if (command === 'next') view?.goRight()
-    if (command === 'previous') view?.goLeft()
+    if (command === 'next') { hideSelectionTools(); view?.goRight() }
+    if (command === 'previous') { hideSelectionTools(); view?.goLeft() }
     if (command === 'highlight') highlightSelection()
     if (command === 'toc' || command === 'notes') showPanel(command)
+    if (command === 'appearance') toggleAppearance()
     report('rust-command', { command })
   }
   report('ready')

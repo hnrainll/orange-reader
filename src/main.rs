@@ -27,7 +27,20 @@ use std::{
 };
 use store::{HistoryEntry, Store};
 
-actions!(orange_reader, [OpenFile, ShowHistory, CloseWindow, QuitApp]);
+actions!(
+    orange_reader,
+    [
+        OpenFile,
+        ShowHistory,
+        CloseWindow,
+        QuitApp,
+        PrevPage,
+        NextPage,
+        ToggleToc,
+        ToggleNotes,
+        ToggleAppearance,
+    ]
+);
 
 #[derive(RustEmbed)]
 #[folder = "foliate-js/"]
@@ -87,7 +100,8 @@ struct ReaderSettings {
     letter_spacing: f32,
     paragraph_spacing: f32,
     font_family: String,
-    dark: bool,
+    theme: String,
+    spread: String,
 }
 
 impl ReaderSettings {
@@ -102,24 +116,64 @@ impl ReaderSettings {
         };
         Self {
             font_size: number("font_size", 18.0, 12.0, 32.0),
-            line_height: number("line_height", 1.6, 1.0, 2.4),
-            content_width: number("content_width", 720.0, 480.0, 960.0),
+            line_height: number("line_height", 1.65, 1.2, 2.4),
+            content_width: number("content_width", 720.0, 520.0, 960.0),
             letter_spacing: number("letter_spacing", 0.0, 0.0, 0.1),
-            paragraph_spacing: number("paragraph_spacing", 1.0, 0.5, 2.5),
+            paragraph_spacing: number("paragraph_spacing", 1.0, 0.5, 2.4),
             font_family: store
                 .setting("font_family")
                 .filter(|family| matches!(family.as_str(), "original" | "serif" | "sans-serif"))
                 .unwrap_or_else(|| "original".to_owned()),
-            dark: store.setting("theme").as_deref() == Some("dark"),
+            theme: store
+                .setting("theme")
+                .filter(|theme| matches!(theme.as_str(), "light" | "sepia" | "gray" | "dark"))
+                .unwrap_or_else(|| "light".to_owned()),
+            spread: store
+                .setting("spread")
+                .filter(|spread| matches!(spread.as_str(), "auto" | "none"))
+                .unwrap_or_else(|| "auto".to_owned()),
         }
     }
 
-    fn font_family_label(&self) -> &'static str {
-        match self.font_family.as_str() {
-            "serif" => "字体：衬线",
-            "sans-serif" => "字体：无衬线",
-            _ => "字体：原版",
+    fn save_from_json(store: &Store, value: &Value) -> anyhow::Result<()> {
+        let save_num = |json_key: &str, db_key: &str, min: f64, max: f64| -> anyhow::Result<()> {
+            if let Some(num) = value
+                .get(json_key)
+                .and_then(Value::as_f64)
+                .filter(|v| v.is_finite())
+            {
+                let clamped = num.clamp(min, max);
+                store.save_setting(db_key, &format!("{clamped:.2}"))?;
+            }
+            Ok(())
+        };
+        save_num("fontSize", "font_size", 12.0, 32.0)?;
+        save_num("lineHeight", "line_height", 1.2, 2.4)?;
+        save_num("contentWidth", "content_width", 520.0, 960.0)?;
+        save_num("letterSpacing", "letter_spacing", 0.0, 0.1)?;
+        save_num("paragraphSpacing", "paragraph_spacing", 0.5, 2.4)?;
+        if let Some(family) = value
+            .get("fontFamily")
+            .and_then(Value::as_str)
+            .filter(|f| matches!(*f, "original" | "serif" | "sans-serif"))
+        {
+            store.save_setting("font_family", family)?;
         }
+        if let Some(theme) = value
+            .get("theme")
+            .and_then(Value::as_str)
+            .filter(|t| matches!(*t, "light" | "sepia" | "gray" | "dark"))
+        {
+            store.save_setting("theme", theme)?;
+        }
+        if let Some(spread) = value
+            .get("spread")
+            .and_then(Value::as_str)
+            .filter(|s| matches!(*s, "auto" | "none"))
+        {
+            store.save_setting("spread", spread)?;
+        }
+        Ok(())
     }
 
     fn json(&self) -> Value {
@@ -130,7 +184,8 @@ impl ReaderSettings {
             "letterSpacing": self.letter_spacing,
             "paragraphSpacing": self.paragraph_spacing,
             "fontFamily": self.font_family,
-            "dark": self.dark,
+            "theme": self.theme,
+            "spread": self.spread,
         })
     }
 }
@@ -238,6 +293,7 @@ fn open_reader_for_entry(
     let title = entry.title.clone();
     let book_id = entry.id;
     let options = WindowOptions {
+        window_bounds: Some(WindowBounds::centered(size(px(1140.), px(780.)), cx)),
         titlebar: Some(TitlebarOptions {
             title: Some(title.into()),
             ..Default::default()
@@ -245,7 +301,7 @@ fn open_reader_for_entry(
         ..Default::default()
     };
     let (handle, _) = gpui_kit::open_window(options, cx, move |window, cx| {
-        ReaderWindow::new(window, cx, server, store, book_id, settings)
+        ReaderWindow::new(window, cx, server, store, book_id)
     })?;
     cx.global_mut::<AppState>().open_books.insert(book_id, handle);
     schedule_refresh_history(cx);
@@ -595,9 +651,8 @@ impl Render for HistoryView {
 
 struct ReaderWindow {
     webview: Entity<WebView>,
+    focus_handle: FocusHandle,
     _server: ReaderServer,
-    settings: ReaderSettings,
-    store: Rc<Store>,
 }
 
 impl ReaderWindow {
@@ -607,11 +662,12 @@ impl ReaderWindow {
         server: ReaderServer,
         store: Rc<Store>,
         book_id: i64,
-        settings: ReaderSettings,
     ) -> Entity<Self> {
         let url = server.url.clone();
         let ipc_store = store.clone();
         let async_app = cx.to_async();
+        let focus_handle = cx.focus_handle();
+        window.focus(&focus_handle, cx);
         let webview = cx.new(|cx| {
             let allowed_url = url.clone();
             let allowed_blob_url = format!("blob:{allowed_url}");
@@ -637,6 +693,26 @@ impl ReaderWindow {
                         .filter(|cfi| cfi.starts_with("epubcfi(") && cfi.len() < 4096);
                     let mut should_refresh_history = false;
                     let result = match message.get("kind").and_then(Value::as_str) {
+                        Some("open-file") => {
+                            let app = async_app.clone();
+                            app.spawn(async move |cx| {
+                                let _ = cx.update(prompt_open_epubs);
+                            })
+                            .detach();
+                            return;
+                        }
+                        Some("show-history") => {
+                            let app = async_app.clone();
+                            app.spawn(async move |cx| {
+                                let _ = cx.update(open_or_focus_history_window);
+                            })
+                            .detach();
+                            return;
+                        }
+                        Some("settings") => match message.get("settings") {
+                            Some(settings) => ReaderSettings::save_from_json(&ipc_store, settings),
+                            None => return,
+                        },
                         Some("relocate") => {
                             let fraction = message.get("fraction").and_then(Value::as_f64).filter(
                                 |fraction| fraction.is_finite() && (0.0..=1.0).contains(fraction),
@@ -722,9 +798,8 @@ impl ReaderWindow {
         });
         cx.new(|_| Self {
             webview,
+            focus_handle,
             _server: server,
-            settings,
-            store,
         })
     }
 
@@ -736,188 +811,24 @@ impl ReaderWindow {
             }
         });
     }
-
-    fn update_settings(&mut self, key: &str, cx: &mut Context<Self>) {
-        match key {
-            "font-smaller" => self.settings.font_size = (self.settings.font_size - 2.0).max(12.0),
-            "font-larger" => self.settings.font_size = (self.settings.font_size + 2.0).min(32.0),
-            "line-smaller" => {
-                self.settings.line_height = (self.settings.line_height - 0.2).max(1.0)
-            }
-            "line-larger" => self.settings.line_height = (self.settings.line_height + 0.2).min(2.4),
-            "width-smaller" => {
-                self.settings.content_width = (self.settings.content_width - 80.0).max(480.0)
-            }
-            "width-larger" => {
-                self.settings.content_width = (self.settings.content_width + 80.0).min(960.0)
-            }
-            "letter-smaller" => {
-                self.settings.letter_spacing = (self.settings.letter_spacing - 0.01).max(0.0)
-            }
-            "letter-larger" => {
-                self.settings.letter_spacing = (self.settings.letter_spacing + 0.01).min(0.1)
-            }
-            "paragraph-smaller" => {
-                self.settings.paragraph_spacing = (self.settings.paragraph_spacing - 0.1).max(0.5)
-            }
-            "paragraph-larger" => {
-                self.settings.paragraph_spacing = (self.settings.paragraph_spacing + 0.1).min(2.5)
-            }
-            "font-family" => {
-                self.settings.font_family = match self.settings.font_family.as_str() {
-                    "original" => "serif",
-                    "serif" => "sans-serif",
-                    _ => "original",
-                }
-                .to_owned()
-            }
-            "theme" => self.settings.dark = !self.settings.dark,
-            _ => return,
-        }
-        let (name, value) = match key {
-            "font-smaller" | "font-larger" => ("font_size", self.settings.font_size.to_string()),
-            "line-smaller" | "line-larger" => {
-                ("line_height", self.settings.line_height.to_string())
-            }
-            "width-smaller" | "width-larger" => {
-                ("content_width", self.settings.content_width.to_string())
-            }
-            "letter-smaller" | "letter-larger" => {
-                ("letter_spacing", self.settings.letter_spacing.to_string())
-            }
-            "paragraph-smaller" | "paragraph-larger" => (
-                "paragraph_spacing",
-                self.settings.paragraph_spacing.to_string(),
-            ),
-            "font-family" => ("font_family", self.settings.font_family.clone()),
-            "theme" => (
-                "theme",
-                if self.settings.dark { "dark" } else { "light" }.to_owned(),
-            ),
-            _ => unreachable!(),
-        };
-        if let Err(error) = self.store.save_setting(name, &value) {
-            eprintln!("保存阅读设置失败：{error}");
-        }
-        let script = format!("window.applyReaderSettings?.({})", self.settings.json());
-        self.webview.update(cx, |view, _| {
-            if let Err(error) = view.raw().evaluate_script(&script) {
-                eprintln!("应用阅读设置失败：{error}");
-            }
-        });
-        cx.notify();
-    }
 }
 
 impl Render for ReaderWindow {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
+        div()
             .size_full()
+            .key_context("ReaderWindow")
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|this, _: &PrevPage, _, cx| this.send("previous", cx)))
+            .on_action(cx.listener(|this, _: &NextPage, _, cx| this.send("next", cx)))
+            .on_action(cx.listener(|this, _: &ToggleToc, _, cx| this.send("toc", cx)))
+            .on_action(cx.listener(|this, _: &ToggleNotes, _, cx| this.send("notes", cx)))
+            .on_action(cx.listener(|this, _: &ToggleAppearance, _, cx| this.send("appearance", cx)))
             .on_drop(|paths: &ExternalPaths, _, cx| {
                 let paths = paths.paths().to_vec();
                 cx.defer(move |cx| open_epub_paths(paths, false, cx));
             })
-            .child(
-                h_flex()
-                    .px_3()
-                    .py_2()
-                    .gap_2()
-                    .flex_wrap()
-                    .items_center()
-                    .child(
-                        Button::new("open-file")
-                            .label("打开…")
-                            .on_click(|_, _, cx| prompt_open_epubs(cx)),
-                    )
-                    .child(
-                        Button::new("history")
-                            .label("最近阅读")
-                            .on_click(|_, _, cx| cx.defer(open_or_focus_history_window)),
-                    )
-                    .child(
-                        Button::new("previous")
-                            .label("上一页")
-                            .on_click(cx.listener(|this, _, _, cx| this.send("previous", cx))),
-                    )
-                    .child(
-                        Button::new("next")
-                            .label("下一页")
-                            .on_click(cx.listener(|this, _, _, cx| this.send("next", cx))),
-                    )
-                    .child(
-                        Button::new("toc")
-                            .label("目录")
-                            .on_click(cx.listener(|this, _, _, cx| this.send("toc", cx))),
-                    )
-                    .child(
-                        Button::new("notes")
-                            .label("高亮")
-                            .on_click(cx.listener(|this, _, _, cx| this.send("notes", cx))),
-                    )
-                    .child(
-                        Button::new("highlight")
-                            .label("高亮选中")
-                            .on_click(cx.listener(|this, _, _, cx| this.send("highlight", cx))),
-                    )
-                    .child(Button::new("font-smaller").label("A−").on_click(
-                        cx.listener(|this, _, _, cx| this.update_settings("font-smaller", cx)),
-                    ))
-                    .child(format!("{}px", self.settings.font_size as u32))
-                    .child(Button::new("font-larger").label("A+").on_click(
-                        cx.listener(|this, _, _, cx| this.update_settings("font-larger", cx)),
-                    ))
-                    .child(
-                        Button::new("theme")
-                            .label(if self.settings.dark { "浅色" } else { "深色" })
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.update_settings("theme", cx)),
-                            ),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .px_3()
-                    .pb_2()
-                    .gap_2()
-                    .flex_wrap()
-                    .items_center()
-                    .child(
-                        Button::new("font-family")
-                            .label(self.settings.font_family_label())
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.update_settings("font-family", cx)
-                            })),
-                    )
-                    .child(Button::new("line-smaller").label("行距−").on_click(
-                        cx.listener(|this, _, _, cx| this.update_settings("line-smaller", cx)),
-                    ))
-                    .child(format!("{:.1}", self.settings.line_height))
-                    .child(Button::new("line-larger").label("行距+").on_click(
-                        cx.listener(|this, _, _, cx| this.update_settings("line-larger", cx)),
-                    ))
-                    .child(Button::new("width-smaller").label("宽度−").on_click(
-                        cx.listener(|this, _, _, cx| this.update_settings("width-smaller", cx)),
-                    ))
-                    .child(format!("{}px", self.settings.content_width as u32))
-                    .child(Button::new("width-larger").label("宽度+").on_click(
-                        cx.listener(|this, _, _, cx| this.update_settings("width-larger", cx)),
-                    ))
-                    .child(Button::new("letter-smaller").label("字距−").on_click(
-                        cx.listener(|this, _, _, cx| this.update_settings("letter-smaller", cx)),
-                    ))
-                    .child(format!("{:.2}em", self.settings.letter_spacing))
-                    .child(Button::new("letter-larger").label("字距+").on_click(
-                        cx.listener(|this, _, _, cx| this.update_settings("letter-larger", cx)),
-                    ))
-                    .child(Button::new("paragraph-smaller").label("段距−").on_click(
-                        cx.listener(|this, _, _, cx| this.update_settings("paragraph-smaller", cx)),
-                    ))
-                    .child(format!("{:.1}em", self.settings.paragraph_spacing))
-                    .child(Button::new("paragraph-larger").label("段距+").on_click(
-                        cx.listener(|this, _, _, cx| this.update_settings("paragraph-larger", cx)),
-                    )),
-            )
-            .child(div().flex_1().child(self.webview.clone()))
+            .child(self.webview.clone())
     }
 }
 
@@ -1026,6 +937,17 @@ fn configure_menus(cx: &mut App) {
         KeyBinding::new("cmd-shift-o", ShowHistory, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
         KeyBinding::new("cmd-q", QuitApp, None),
+        KeyBinding::new("left", PrevPage, Some("ReaderWindow")),
+        KeyBinding::new("up", PrevPage, Some("ReaderWindow")),
+        KeyBinding::new("pageup", PrevPage, Some("ReaderWindow")),
+        KeyBinding::new("shift-space", PrevPage, Some("ReaderWindow")),
+        KeyBinding::new("right", NextPage, Some("ReaderWindow")),
+        KeyBinding::new("down", NextPage, Some("ReaderWindow")),
+        KeyBinding::new("pagedown", NextPage, Some("ReaderWindow")),
+        KeyBinding::new("space", NextPage, Some("ReaderWindow")),
+        KeyBinding::new("cmd-shift-t", ToggleToc, Some("ReaderWindow")),
+        KeyBinding::new("cmd-shift-n", ToggleNotes, Some("ReaderWindow")),
+        KeyBinding::new("cmd-shift-a", ToggleAppearance, Some("ReaderWindow")),
     ]);
     cx.on_action(|_: &OpenFile, cx| prompt_open_epubs(cx));
     cx.on_action(|_: &ShowHistory, cx| cx.defer(open_or_focus_history_window));
@@ -1044,6 +966,14 @@ fn configure_menus(cx: &mut App) {
             MenuItem::action("最近阅读", ShowHistory),
             MenuItem::separator(),
             MenuItem::action("关闭窗口", CloseWindow),
+        ]),
+        Menu::new("阅读").items([
+            MenuItem::action("上一页", PrevPage),
+            MenuItem::action("下一页", NextPage),
+            MenuItem::separator(),
+            MenuItem::action("目录", ToggleToc),
+            MenuItem::action("高亮列表", ToggleNotes),
+            MenuItem::action("外观与排版", ToggleAppearance),
         ]),
     ]);
 }
