@@ -141,15 +141,12 @@
     transition: opacity 160ms ease;
   }
   .quiet-chapter {
-    top: 12px;
+    top: 6px;
     left: 28px;
     max-width: 60vw;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  body.windowed .quiet-chapter {
-    left: 82px;
   }
   .quiet-progress {
     bottom: 12px;
@@ -181,9 +178,6 @@
     transform: translateY(-100%);
     pointer-events: none;
     transition: opacity 170ms ease, transform 190ms cubic-bezier(0.22, 1, 0.36, 1), background-color 180ms ease;
-  }
-  body.windowed .topbar {
-    padding-left: 78px;
   }
   body.chrome-visible .topbar {
     opacity: 1;
@@ -364,9 +358,6 @@
     align-items: center;
     gap: 8px;
     border-bottom: 1px solid var(--border);
-  }
-  body.windowed .panel-header {
-    padding-top: 38px;
   }
   .segmented {
     flex: 1;
@@ -888,12 +879,10 @@
     console.log('reader event:', message)
   }
 
-  function syncWindowMode() {
-    const isFullscreen = window.innerHeight >= (window.screen?.height || 0) - 4
-    document.body.classList.toggle('windowed', !isFullscreen)
-  }
-  syncWindowMode()
-  window.addEventListener('resize', syncWindowMode)
+  document.querySelector('.topbar').addEventListener('dblclick', event => {
+    if (event.target.closest('button')) return
+    report('window-double-click')
+  })
 
   function setChromeVisible(visible) {
     chromeVisible = visible
@@ -1191,7 +1180,7 @@
       view.renderer.setAttribute?.('max-inline-size', `${Math.round(settings.contentWidth)}px`)
       view.renderer.setAttribute?.('max-column-count', settings.spread === 'none' ? '1' : '2')
       view.renderer.setAttribute?.('gap', settings.spread === 'none' ? '6%' : '7%')
-      view.renderer.setAttribute?.('margin', '44px')
+      view.renderer.setAttribute?.('margin', '30px')
       view.renderer.setAttribute?.('animated', '')
     }
 
