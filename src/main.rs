@@ -293,14 +293,8 @@ fn open_reader_for_entry(
     let server = start_server(Some(bytes), Some(session));
     let title = entry.title.clone();
     let book_id = entry.id;
-    let restored_bounds = Bounds::centered(None, size(px(1140.), px(780.)), cx);
-    let window_bounds = if self_test {
-        WindowBounds::Windowed(restored_bounds)
-    } else {
-        WindowBounds::Fullscreen(restored_bounds)
-    };
     let options = WindowOptions {
-        window_bounds: Some(window_bounds),
+        window_bounds: Some(WindowBounds::centered(size(px(1140.), px(780.)), cx)),
         titlebar: Some(TitlebarOptions {
             title: Some(title.into()),
             appears_transparent: true,
