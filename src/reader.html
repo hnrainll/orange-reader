@@ -966,11 +966,33 @@
     renderPanel()
   }
 
+  function getCoverTarget() {
+    const landmark = view?.book?.landmarks?.find(item => item.type?.includes('cover'))
+    if (landmark?.href) return landmark.href
+    return 0
+  }
+
   function renderPanel() {
     panelBody.replaceChildren()
     if (panelKind === 'toc') {
       const toc = view?.book?.toc || []
-      if (!toc.length) {
+      const coverTarget = getCoverTarget()
+      const hasCoverInToc = toc.some(item =>
+        item.href === coverTarget || /封面|cover/i.test(item.label || '')
+      )
+      if (view?.book?.sections?.length && !hasCoverInToc) {
+        const coverBtn = document.createElement('button')
+        coverBtn.className = 'toc-item'
+        if (currentSection?.current === 0 && !currentTocHref) coverBtn.classList.add('active')
+        coverBtn.textContent = '封面'
+        coverBtn.onclick = () => {
+          view?.goTo(coverTarget)
+          closePanel()
+          setChromeVisible(false)
+        }
+        panelBody.append(coverBtn)
+      }
+      if (!toc.length && !view?.book?.sections?.length) {
         const empty = document.createElement('div')
         empty.className = 'panel-empty'
         empty.textContent = '本书未提供目录。'
@@ -1458,7 +1480,24 @@
       await remove.onclick()
       if (savedAnnotations.some(item => item.cfi === cfi)) throw new Error('高亮删除失败')
       closePanel()
-      report('self-test-complete', { tocCount, cfi })
+      await view.goTo(0)
+      const coverDoc = view.renderer.getContents()[0]?.doc
+      const coverImg = coverDoc?.querySelector('img')
+      if (!coverImg) throw new Error('封面图片元素未生成')
+      if (!coverImg.complete) {
+        await new Promise((resolve, reject) => {
+          coverImg.onload = resolve
+          coverImg.onerror = () => reject(new Error('封面图片加载失败'))
+        })
+      }
+      if (!coverImg.naturalWidth || !coverImg.naturalHeight) {
+        throw new Error('封面图片尺寸为空')
+      }
+      report('self-test-complete', {
+        tocCount,
+        cfi,
+        coverSize: [coverImg.naturalWidth, coverImg.naturalHeight],
+      })
     } catch (error) {
       report('self-test-error', { message: String(error) })
     }
@@ -1522,6 +1561,30 @@
       })
       view.addEventListener('load', event => {
         const { doc, index } = event.detail
+        // Normalize Calibre/EPUB SVG-wrapped cover images into standard <img>
+        // so WebKit always renders them cleanly with correct aspect ratio.
+        const svgs = doc.body?.querySelectorAll('svg') || []
+        for (const svg of svgs) {
+          const images = svg.querySelectorAll('image')
+          for (const image of images) {
+            const xlink = image.getAttributeNS('http://www.w3.org/1999/xlink', 'href')
+            if (xlink && !image.getAttribute('href')) {
+              image.setAttribute('href', xlink)
+            }
+          }
+          if (images.length === 1 && !doc.body.textContent.trim() && svgs.length === 1) {
+            const src = images[0].getAttribute('href')
+              || images[0].getAttributeNS('http://www.w3.org/1999/xlink', 'href')
+            if (src) {
+              const img = doc.createElement('img')
+              img.src = src
+              img.alt = 'Cover'
+              const maxH = svg.style.maxHeight || '100vh'
+              img.style.cssText = `display:block;margin:0 auto;max-width:100%;max-height:${maxH};width:auto;height:auto;object-fit:contain;`
+              svg.replaceWith(img)
+            }
+          }
+        }
         for (const annotation of savedAnnotations) {
           view.addAnnotation({ value: annotation.cfi, color: annotation.color, type: annotation.type })
             .catch(error => console.warn('无法恢复高亮', error))
@@ -1566,10 +1629,10 @@
       })
       const location = session?.location
       try {
-        await view.init({ lastLocation: location || undefined, showTextStart: !location })
+        await view.init({ lastLocation: location ?? 0, showTextStart: false })
       } catch (error) {
         console.warn('无法恢复阅读位置，从开头打开', error)
-        await view.init({ showTextStart: true })
+        await view.init({ lastLocation: 0, showTextStart: false })
       }
       if (savedAnnotations.length) {
         await Promise.all(savedAnnotations.map(annotation =>
