@@ -39,6 +39,7 @@ actions!(
         ToggleToc,
         ToggleNotes,
         ToggleAppearance,
+        ToggleFullscreen,
     ]
 );
 
@@ -292,10 +293,17 @@ fn open_reader_for_entry(
     let server = start_server(Some(bytes), Some(session));
     let title = entry.title.clone();
     let book_id = entry.id;
+    let restored_bounds = Bounds::centered(None, size(px(1140.), px(780.)), cx);
+    let window_bounds = if self_test {
+        WindowBounds::Windowed(restored_bounds)
+    } else {
+        WindowBounds::Fullscreen(restored_bounds)
+    };
     let options = WindowOptions {
-        window_bounds: Some(WindowBounds::centered(size(px(1140.), px(780.)), cx)),
+        window_bounds: Some(window_bounds),
         titlebar: Some(TitlebarOptions {
             title: Some(title.into()),
+            appears_transparent: true,
             ..Default::default()
         }),
         ..Default::default()
@@ -824,6 +832,7 @@ impl Render for ReaderWindow {
             .on_action(cx.listener(|this, _: &ToggleToc, _, cx| this.send("toc", cx)))
             .on_action(cx.listener(|this, _: &ToggleNotes, _, cx| this.send("notes", cx)))
             .on_action(cx.listener(|this, _: &ToggleAppearance, _, cx| this.send("appearance", cx)))
+            .on_action(|_: &ToggleFullscreen, window, _| window.toggle_fullscreen())
             .on_drop(|paths: &ExternalPaths, _, cx| {
                 let paths = paths.paths().to_vec();
                 cx.defer(move |cx| open_epub_paths(paths, false, cx));
@@ -948,6 +957,7 @@ fn configure_menus(cx: &mut App) {
         KeyBinding::new("cmd-shift-t", ToggleToc, Some("ReaderWindow")),
         KeyBinding::new("cmd-shift-n", ToggleNotes, Some("ReaderWindow")),
         KeyBinding::new("cmd-shift-a", ToggleAppearance, Some("ReaderWindow")),
+        KeyBinding::new("ctrl-cmd-f", ToggleFullscreen, Some("ReaderWindow")),
     ]);
     cx.on_action(|_: &OpenFile, cx| prompt_open_epubs(cx));
     cx.on_action(|_: &ShowHistory, cx| cx.defer(open_or_focus_history_window));
@@ -974,6 +984,8 @@ fn configure_menus(cx: &mut App) {
             MenuItem::action("目录", ToggleToc),
             MenuItem::action("高亮列表", ToggleNotes),
             MenuItem::action("外观与排版", ToggleAppearance),
+            MenuItem::separator(),
+            MenuItem::action("切换全屏", ToggleFullscreen),
         ]),
     ]);
 }
