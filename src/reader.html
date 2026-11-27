@@ -799,6 +799,14 @@
       </div>
     </div>
     <div class="stepper-row">
+      <span>上下边距</span>
+      <div class="stepper">
+        <button id="set-margin-dec">−</button>
+        <span id="val-vertical-margin">26px</span>
+        <button id="set-margin-inc">+</button>
+      </div>
+    </div>
+    <div class="stepper-row">
       <span>字距</span>
       <div class="stepper">
         <button id="set-letter-dec">−</button>
@@ -853,6 +861,7 @@
     fontSize: 18,
     lineHeight: 1.65,
     contentWidth: 760,
+    verticalMargin: 26,
     letterSpacing: 0,
     paragraphSpacing: 1,
     fontFamily: 'original',
@@ -1160,14 +1169,26 @@
     return Math.max(getMinContentWidth(), Math.min(getMaxContentWidth(), Math.round(settings.contentWidth)))
   }
 
+  function getMaxVerticalMargin() {
+    const viewportH = reader.clientHeight || window.innerHeight
+    return Math.max(12, Math.min(140, Math.floor((viewportH - 220) / 2)))
+  }
+
+  function getEffectiveVerticalMargin() {
+    return Math.max(12, Math.min(getMaxVerticalMargin(), Math.round(settings.verticalMargin)))
+  }
+
   function syncAppearanceUI() {
     const minW = getMinContentWidth()
     const maxW = getMaxContentWidth()
     const effW = getEffectiveContentWidth()
+    const maxM = getMaxVerticalMargin()
+    const effM = getEffectiveVerticalMargin()
 
     document.getElementById('val-font-size').textContent = `${Math.round(settings.fontSize)}px`
     document.getElementById('val-line-height').textContent = settings.lineHeight.toFixed(2)
     document.getElementById('val-content-width').textContent = `${effW}px`
+    document.getElementById('val-vertical-margin').textContent = `${effM}px`
     document.getElementById('val-letter-spacing').textContent = `${settings.letterSpacing.toFixed(2)}em`
     document.getElementById('val-para-spacing').textContent = `${settings.paragraphSpacing.toFixed(1)}em`
 
@@ -1177,6 +1198,8 @@
     document.getElementById('set-line-inc').disabled = settings.lineHeight >= 2.4
     document.getElementById('set-width-dec').disabled = effW <= minW
     document.getElementById('set-width-inc').disabled = effW >= maxW
+    document.getElementById('set-margin-dec').disabled = effM <= 12
+    document.getElementById('set-margin-inc').disabled = effM >= maxM
     document.getElementById('set-letter-dec').disabled = settings.letterSpacing <= 0
     document.getElementById('set-letter-inc').disabled = settings.letterSpacing >= 0.1
     document.getElementById('set-para-dec').disabled = settings.paragraphSpacing <= 0.5
@@ -1195,6 +1218,7 @@
 
   window.addEventListener('resize', () => {
     syncAppearanceUI()
+    view?.renderer?.setAttribute?.('margin', `${getEffectiveVerticalMargin()}px`)
   })
 
   function applySettings(next, persist = false) {
@@ -1226,7 +1250,7 @@
       view.renderer.setAttribute?.('max-inline-size', `${Math.round(settings.contentWidth)}px`)
       view.renderer.setAttribute?.('max-column-count', settings.spread === 'none' ? '1' : '2')
       view.renderer.setAttribute?.('gap', `${GAP_PERCENT}%`)
-      view.renderer.setAttribute?.('margin', '26px')
+      view.renderer.setAttribute?.('margin', `${getEffectiveVerticalMargin()}px`)
       view.renderer.setAttribute?.('animated', '')
     }
 
@@ -1367,6 +1391,17 @@
     const current = getEffectiveContentWidth()
     if (current >= maxW) return
     updateSetting({ contentWidth: Math.min(maxW, current + 40) })
+  }
+  document.getElementById('set-margin-dec').onclick = () => {
+    const current = getEffectiveVerticalMargin()
+    if (current <= 12) return
+    updateSetting({ verticalMargin: Math.max(12, current - 6) })
+  }
+  document.getElementById('set-margin-inc').onclick = () => {
+    const maxM = getMaxVerticalMargin()
+    const current = getEffectiveVerticalMargin()
+    if (current >= maxM) return
+    updateSetting({ verticalMargin: Math.min(maxM, current + 6) })
   }
   document.getElementById('set-letter-dec').onclick = () =>
     updateSetting({ letterSpacing: Math.max(0, +(settings.letterSpacing - 0.01).toFixed(2)) })

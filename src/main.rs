@@ -98,6 +98,7 @@ struct ReaderSettings {
     font_size: f32,
     line_height: f32,
     content_width: f32,
+    vertical_margin: f32,
     letter_spacing: f32,
     paragraph_spacing: f32,
     font_family: String,
@@ -119,6 +120,7 @@ impl ReaderSettings {
             font_size: number("font_size", 18.0, 12.0, 32.0),
             line_height: number("line_height", 1.65, 1.2, 2.4),
             content_width: number("content_width", 760.0, 360.0, 1600.0),
+            vertical_margin: number("vertical_margin", 26.0, 12.0, 140.0),
             letter_spacing: number("letter_spacing", 0.0, 0.0, 0.1),
             paragraph_spacing: number("paragraph_spacing", 1.0, 0.5, 2.4),
             font_family: store
@@ -151,6 +153,7 @@ impl ReaderSettings {
         save_num("fontSize", "font_size", 12.0, 32.0)?;
         save_num("lineHeight", "line_height", 1.2, 2.4)?;
         save_num("contentWidth", "content_width", 360.0, 1600.0)?;
+        save_num("verticalMargin", "vertical_margin", 12.0, 140.0)?;
         save_num("letterSpacing", "letter_spacing", 0.0, 0.1)?;
         save_num("paragraphSpacing", "paragraph_spacing", 0.5, 2.4)?;
         if let Some(family) = value
@@ -182,6 +185,7 @@ impl ReaderSettings {
             "fontSize": self.font_size,
             "lineHeight": self.line_height,
             "contentWidth": self.content_width,
+            "verticalMargin": self.vertical_margin,
             "letterSpacing": self.letter_spacing,
             "paragraphSpacing": self.paragraph_spacing,
             "fontFamily": self.font_family,
