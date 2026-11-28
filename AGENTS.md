@@ -2,7 +2,7 @@
 
 仓库是文档驱动的 macOS 原生电子书阅读器（类似预览 / IINA），支持 EPUB、AZW3 / MOBI（及 AZW / PRC，无 DRM）、CBZ 与 FB2 / FBZ / FB2.ZIP：不做书架/书库文件管理，直接打开磁盘原路径的电子书阅读，仅记录最近阅读历史（文件路径、阅读进度、章节与高亮）。
 
-`cargo run` 启动 GPUI Kit 最近阅读窗口；传入电子书路径或从 Finder 打开时直接弹出 WKWebView 阅读窗口，书页由 `foliate-js/` 渲染。正式入口在 `src/main.rs`，无 Electron 或 Node.js 运行时。
+`cargo run` 启动 GPUI Kit 最近阅读窗口；传入电子书路径或从 Finder 打开时直接弹出 WKWebView 阅读窗口，书页由 `foliate-js/` 渲染。正式入口在 `src/main.rs`。
 
 ## 结构
 

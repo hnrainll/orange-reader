@@ -1,6 +1,6 @@
 # Verso
 
-轻量级 macOS 原生电子书阅读器，支持 **EPUB、AZW3 / MOBI（无 DRM）、CBZ、FB2 / FBZ / FB2.ZIP**。界面使用 GPUI Kit，书页由嵌入的 WKWebView 和 foliate-js 排版。阅读器及其网页资源一起编译进单个可执行文件，运行时不需要 Electron、Node.js 或源码目录。
+轻量级 macOS 原生电子书阅读器，支持 **EPUB、AZW3 / MOBI（无 DRM）、CBZ、FB2 / FBZ / FB2.ZIP**。界面使用 GPUI Kit，书页由嵌入的 WKWebView 和 foliate-js 排版。阅读器及其网页资源一起编译进单个可执行文件，运行时无需依赖源码目录。
 
 Verso **不做书架或文件拷贝管理**——你的电子书留在原本的文件夹里，像使用 macOS 预览或 IINA 一样自然打开阅读；应用仅记录**最近阅读历史**（看过哪本、文件在什么位置、看到了哪里）以及对应的高亮与阅读偏好。
 
