@@ -6,7 +6,11 @@
 
 ## 结构
 
-- `src/main.rs`：最近阅读窗口（`HistoryView`）、多窗口阅读器（`ReaderWindow`）、macOS 打开文件钩子（`on_open_urls`/`on_reopen`）、loopback 资源服务与 WebView IPC。
+- `src/main.rs`：应用入口、`AppState` 窗口协调、macOS 打开文件钩子（`on_open_urls`/`on_reopen`）与菜单快捷键。
+- `src/history_view.rs`：最近阅读窗口（`HistoryView`）UI 与交互。
+- `src/reader_window.rs`：多窗口阅读器（`ReaderWindow`）与 WebView IPC 消息处理。
+- `src/server.rs`：loopback 本地资源 HTTP 服务与内嵌 `foliate-js/` 资源。
+- `src/settings.rs`：阅读排版与主题设置模型（`ReaderSettings`）及校验。
 - `src/reader.html`：目录、翻页、选字、高亮与阅读设置的网页端交互。
 - `src/epub.rs`：打开时解析 EPUB 标题、作者与封面，实际排版由 `foliate-js` 负责。
 - `src/store.rs`：精简 SQLite 历史库（`history.db`），按内容 SHA-256 与规范路径双匹配；移出历史仅隐藏并清封面缓存，绝不删除磁盘原文件。

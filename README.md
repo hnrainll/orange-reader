@@ -45,7 +45,11 @@ make test
 
 ## 代码结构
 
-- `src/main.rs`：最近阅读窗口、多窗口阅读器、macOS 打开文件事件、本地资源服务与 WebView IPC。
+- `src/main.rs`：应用入口、窗口协调、macOS 打开文件事件与菜单快捷键。
+- `src/history_view.rs`：最近阅读窗口 UI 与交互。
+- `src/reader_window.rs`：多窗口阅读器与 WebView IPC 消息处理。
+- `src/server.rs`：loopback 本地资源 HTTP 服务与内嵌 `foliate-js/` 资源。
+- `src/settings.rs`：阅读排版与主题设置模型及校验。
 - `src/reader.html`：WKWebView 中的 foliate-js 阅读交互。
 - `src/epub.rs`：打开时读取 EPUB 元数据和封面。
 - `src/store.rs`：SQLite 阅读历史、进度、高亮与设置（`history.db`）。
