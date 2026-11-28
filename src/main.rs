@@ -1,3 +1,4 @@
+mod book;
 mod epub;
 mod history_view;
 mod reader_window;
@@ -6,6 +7,7 @@ mod settings;
 mod store;
 
 use anyhow::Context as _;
+use book::{BookFormat, is_supported_book_path, parse_book};
 use gpui_kit::*;
 use history_view::HistoryView;
 use percent_encoding::percent_decode_str;
@@ -17,7 +19,7 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     env, fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc::Rc,
 };
 use store::{HistoryEntry, Store};
@@ -47,12 +49,6 @@ struct AppState {
 
 impl Global for AppState {}
 
-fn is_epub_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("epub"))
-}
-
 fn file_url_to_path(raw: &str) -> Option<PathBuf> {
     let path = if let Some(rest) = raw.strip_prefix("file://") {
         let without_host = rest.strip_prefix("localhost").unwrap_or(rest);
@@ -61,7 +57,7 @@ fn file_url_to_path(raw: &str) -> Option<PathBuf> {
     } else {
         PathBuf::from(raw)
     };
-    is_epub_path(&path).then_some(path)
+    is_supported_book_path(&path).then_some(path)
 }
 
 fn refresh_history(cx: &mut App) {
@@ -156,16 +152,26 @@ fn open_reader_for_entry(
         _ => None,
     };
     let settings = ReaderSettings::load(&store);
+    let format = BookFormat::from_path(&entry.file_path).unwrap_or(BookFormat::Epub);
+    let file_name = entry
+        .file_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("book.epub");
+    let has_cover = entry.cover_path.as_ref().is_some_and(|p| p.exists());
     let session = json!({
         "title": entry.title,
         "author": entry.author,
+        "fileName": file_name,
+        "mimeType": format.mime_type(),
+        "hasCover": has_cover,
         "selfTest": self_test,
         "location": location,
         "annotations": annotations,
         "settings": settings.json(),
     })
     .to_string();
-    let server = start_server(Some(bytes), Some(session));
+    let server = start_server(Some((bytes, format.mime_type())), Some(session));
     let title = entry.title.clone();
     let book_id = entry.id;
     let window_bounds = if self_test {
@@ -192,22 +198,22 @@ fn open_reader_for_entry(
     Ok(())
 }
 
-fn open_epub_path(path: PathBuf, self_test: bool, cx: &mut App) -> anyhow::Result<()> {
+fn open_book_path(path: PathBuf, self_test: bool, cx: &mut App) -> anyhow::Result<()> {
     let bytes = fs::read(&path).with_context(|| format!("无法读取 {}", path.display()))?;
-    let parsed = epub::parse(&path).with_context(|| format!("无法解析 {}", path.display()))?;
+    let parsed = parse_book(&path, &bytes).with_context(|| format!("无法解析 {}", path.display()))?;
     let store = cx.global::<AppState>().store.clone();
     let entry = store.record_open(&path, &bytes, &parsed)?;
     open_reader_for_entry(entry, bytes, self_test, cx)
 }
 
-fn open_epub_paths(paths: Vec<PathBuf>, self_test: bool, cx: &mut App) {
+fn open_book_paths(paths: Vec<PathBuf>, self_test: bool, cx: &mut App) {
     let mut errors = Vec::new();
     for path in paths {
-        if !is_epub_path(&path) {
+        if !is_supported_book_path(&path) {
             continue;
         }
-        if let Err(error) = open_epub_path(path, self_test, cx) {
-            eprintln!("打开 EPUB 失败：{error}");
+        if let Err(error) = open_book_path(path, self_test, cx) {
+            eprintln!("打开电子书失败：{error}");
             errors.push(error.to_string());
         }
     }
@@ -229,16 +235,16 @@ fn open_epub_paths(paths: Vec<PathBuf>, self_test: bool, cx: &mut App) {
     }
 }
 
-fn prompt_open_epubs(cx: &mut App) {
+fn prompt_open_books(cx: &mut App) {
     let result = cx.prompt_for_paths(PathPromptOptions {
         files: true,
         directories: false,
         multiple: true,
-        prompt: Some("打开 EPUB".into()),
+        prompt: Some("打开电子书".into()),
     });
     cx.spawn(async move |cx| {
         if let Ok(Ok(Some(paths))) = result.await {
-            let _ = cx.update(|cx| open_epub_paths(paths, false, cx));
+            let _ = cx.update(|cx| open_book_paths(paths, false, cx));
         }
     })
     .detach();
@@ -263,7 +269,7 @@ fn configure_menus(cx: &mut App) {
         KeyBinding::new("cmd-shift-a", ToggleAppearance, Some("ReaderWindow")),
         KeyBinding::new("ctrl-cmd-f", ToggleFullscreen, Some("ReaderWindow")),
     ]);
-    cx.on_action(|_: &OpenFile, cx| prompt_open_epubs(cx));
+    cx.on_action(|_: &OpenFile, cx| prompt_open_books(cx));
     cx.on_action(|_: &ShowHistory, cx| cx.defer(open_or_focus_history_window));
     cx.on_action(|_: &CloseWindow, cx| {
         cx.defer(|cx| {
@@ -276,7 +282,7 @@ fn configure_menus(cx: &mut App) {
     cx.set_menus(vec![
         Menu::new("Verso").items([MenuItem::action("退出 Verso", QuitApp)]),
         Menu::new("文件").items([
-            MenuItem::action("打开 EPUB…", OpenFile),
+            MenuItem::action("打开电子书…", OpenFile),
             MenuItem::action("最近阅读", ShowHistory),
             MenuItem::separator(),
             MenuItem::action("关闭窗口", CloseWindow),
@@ -320,7 +326,7 @@ fn main() {
         }
         if let Some(app) = url_app.borrow().clone() {
             app.spawn(async move |cx| {
-                let _ = cx.update(|cx| open_epub_paths(paths, false, cx));
+                let _ = cx.update(|cx| open_book_paths(paths, false, cx));
             })
             .detach();
         } else {
@@ -350,7 +356,7 @@ fn main() {
         if startup_paths.is_empty() {
             open_or_focus_history_window(cx);
         } else {
-            open_epub_paths(startup_paths, self_test, cx);
+            open_book_paths(startup_paths, self_test, cx);
         }
     });
 }
@@ -361,15 +367,28 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn decodes_macos_file_urls_for_epubs() {
+    fn decodes_macos_file_urls_for_supported_books() {
         assert_eq!(
             file_url_to_path("file:///Users/demo/Books/%E4%B8%89%E4%BD%93.epub"),
             Some(PathBuf::from("/Users/demo/Books/三体.epub"))
         );
         assert_eq!(
-            file_url_to_path("file://localhost/tmp/Sample%20Book.EPUB"),
-            Some(PathBuf::from("/tmp/Sample Book.EPUB"))
+            file_url_to_path("file://localhost/tmp/Sample%20Book.AZW3"),
+            Some(PathBuf::from("/tmp/Sample Book.AZW3"))
+        );
+        assert_eq!(
+            file_url_to_path("file:///tmp/Kindle.mobi"),
+            Some(PathBuf::from("/tmp/Kindle.mobi"))
+        );
+        assert_eq!(
+            file_url_to_path("file:///tmp/Comic.cbz"),
+            Some(PathBuf::from("/tmp/Comic.cbz"))
+        );
+        assert_eq!(
+            file_url_to_path("file:///tmp/Novel.fb2.zip"),
+            Some(PathBuf::from("/tmp/Novel.fb2.zip"))
         );
         assert_eq!(file_url_to_path("file:///tmp/notes.txt"), None);
+        assert_eq!(file_url_to_path("file:///tmp/manual.pdf"), None);
     }
 }

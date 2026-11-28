@@ -27,6 +27,37 @@
         <string>org.idpf.epub-container</string>
       </array>
     </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Kindle / Mobipocket eBook</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>azw3</string>
+        <string>mobi</string>
+        <string>azw</string>
+        <string>prc</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Comic Book Archive</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>cbz</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>FictionBook Document</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>fb2</string>
+        <string>fbz</string>
+      </array>
+    </dict>
   </array>
 </dict>
 </plist>

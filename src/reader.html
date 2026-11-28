@@ -675,7 +675,7 @@
     <button id="btn-history" class="icon-btn" title="最近阅读 (⇧⌘O)" aria-label="最近阅读">
       <svg viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
     </button>
-    <button id="btn-open" class="icon-btn" title="打开 EPUB… (⌘O)" aria-label="打开">
+    <button id="btn-open" class="icon-btn" title="打开电子书… (⌘O)" aria-label="打开">
       <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
     </button>
   </div>
@@ -890,7 +890,7 @@
   const report = (kind, detail = {}) => {
     const message = JSON.stringify({ kind, managed, ...detail })
     window.ipc?.postMessage(message)
-    console.log('reader event:', message)
+    if (message.length <= 2048) console.log('reader event:', message)
   }
 
   document.querySelector('.topbar').addEventListener('dblclick', event => {
@@ -980,7 +980,7 @@
       const hasCoverInToc = toc.some(item =>
         item.href === coverTarget || /封面|cover/i.test(item.label || '')
       )
-      if (view?.book?.sections?.length && !hasCoverInToc) {
+      if (view?.book?.sections?.length && !hasCoverInToc && !view?.isFixedLayout) {
         const coverBtn = document.createElement('button')
         coverBtn.className = 'toc-item'
         if (currentSection?.current === 0 && !currentTocHref) coverBtn.classList.add('active')
@@ -1240,7 +1240,9 @@
 
   window.addEventListener('resize', () => {
     syncAppearanceUI()
-    view?.renderer?.setAttribute?.('margin', `${getEffectiveVerticalMargin()}px`)
+    if (!view?.isFixedLayout) {
+      view?.renderer?.setAttribute?.('margin', `${getEffectiveVerticalMargin()}px`)
+    }
   })
 
   function applySettings(next, persist = false) {
@@ -1249,7 +1251,7 @@
     document.documentElement.dataset.theme = settings.theme
     syncAppearanceUI()
 
-    if (view?.renderer) {
+    if (view?.renderer && !view.isFixedLayout) {
       const palette = themePalette[settings.theme]
       const fontRule = settings.fontFamily === 'original'
         ? ''
@@ -1503,6 +1505,74 @@
     }
   }
 
+  function formatMetaText(value) {
+    if (!value) return ''
+    if (typeof value === 'string') return value.trim()
+    if (typeof value === 'object') {
+      const first = Object.values(value).find(v => typeof v === 'string' && v.trim())
+      return first ? first.trim() : ''
+    }
+    return ''
+  }
+
+  function formatMetaAuthor(value) {
+    if (!value) return ''
+    const list = Array.isArray(value) ? value : [value]
+    return list
+      .map(item => (typeof item === 'string' ? item.trim() : formatMetaText(item?.name)))
+      .filter(Boolean)
+      .join(', ')
+  }
+
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const result = typeof reader.result === 'string' ? reader.result : ''
+        const idx = result.indexOf(',')
+        resolve(idx >= 0 ? result.slice(idx + 1) : '')
+      }
+      reader.onerror = () => reject(reader.error)
+      reader.readAsDataURL(blob)
+    })
+  }
+
+  async function syncBookMetadata(file, session) {
+    try {
+      const rawTitle = formatMetaText(view?.book?.metadata?.title)
+      const metaTitle = rawTitle && rawTitle !== file.name ? rawTitle : ''
+      const metaAuthor = formatMetaAuthor(view?.book?.metadata?.author)
+      if (metaTitle) {
+        bookTitleEl.textContent = metaTitle
+        document.title = metaTitle
+      }
+      if (!managed) return
+
+      const payload = {}
+      if (metaTitle && metaTitle !== (session?.title || '')) payload.title = metaTitle
+      if (metaAuthor && metaAuthor !== (session?.author || '')) payload.author = metaAuthor
+
+      if (!session?.hasCover && typeof view?.book?.getCover === 'function') {
+        const coverBlob = await view.book.getCover()
+        if (
+          coverBlob
+          && coverBlob.size > 0
+          && coverBlob.size <= 5 * 1024 * 1024
+          && !(coverBlob.type || '').toLowerCase().includes('svg')
+        ) {
+          const coverBase64 = await blobToBase64(coverBlob)
+          if (coverBase64) payload.coverBase64 = coverBase64
+        }
+      }
+
+      if (payload.title || payload.author || payload.coverBase64) {
+        report('metadata', payload)
+      }
+    } catch (error) {
+      console.warn('同步元数据失败', error)
+    }
+  }
+
   async function open(file, session = null) {
     view?.close?.()
     reader.replaceChildren()
@@ -1525,6 +1595,7 @@
     hideSelectionTools()
     try {
       await view.open(file)
+      syncBookMetadata(file, session)
       view.history.addEventListener('index-change', updateHistoryButtons)
       updateHistoryButtons()
       applySettings(session?.settings || {}, false)
@@ -1664,11 +1735,13 @@
   }
   report('ready')
 
-  const response = await fetch('/book.epub')
+  const sessionResponse = await fetch('/session.json')
+  const session = sessionResponse.ok ? await sessionResponse.json() : null
+  const response = await fetch('/book')
   if (response.ok) {
-    const sessionResponse = await fetch('/session.json')
-    const session = sessionResponse.ok ? await sessionResponse.json() : null
-    open(new File([await response.blob()], 'book.epub', { type: 'application/epub+zip' }), session)
+    const fileName = session?.fileName || 'book.epub'
+    const mimeType = session?.mimeType || response.headers.get('content-type') || 'application/epub+zip'
+    open(new File([await response.blob()], fileName, { type: mimeType }), session)
   }
 </script>
 </html>

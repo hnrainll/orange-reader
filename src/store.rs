@@ -1,4 +1,4 @@
-use crate::epub::Epub;
+use crate::book::BookMeta;
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
@@ -179,10 +179,17 @@ impl Store {
             .map_err(Into::into)
     }
 
-    fn save_cover_cache(&self, file_hash: &str, epub: &Epub) -> Result<Option<PathBuf>> {
-        let Some(bytes) = &epub.cover else {
+    fn save_cover_cache(&self, file_hash: &str, cover_bytes: Option<&[u8]>) -> Result<Option<PathBuf>> {
+        let Some(bytes) = cover_bytes.filter(|b| !b.is_empty()) else {
             return Ok(None);
         };
+        let trimmed = bytes
+            .iter()
+            .position(|b| !b.is_ascii_whitespace())
+            .map_or(&b""[..], |pos| &bytes[pos..]);
+        if trimmed.starts_with(b"<svg") || trimmed.starts_with(b"<?xml") {
+            return Ok(None);
+        }
         let path = self
             .root
             .join("covers")
@@ -193,13 +200,13 @@ impl Store {
         Ok(Some(path))
     }
 
-    /// Record opening an EPUB file on disk without copying it.
+    /// Record opening a supported ebook file on disk without copying it.
     ///
     /// Matching order:
     /// 1. Content SHA-256 hash: seamlessly resumes progress & highlights even if moved/renamed.
     /// 2. Same canonical file path + same title: updates hash if edited in place.
     /// 3. Otherwise creates a new history entry.
-    pub fn record_open(&self, path: &Path, bytes: &[u8], epub: &Epub) -> Result<HistoryEntry> {
+    pub fn record_open(&self, path: &Path, bytes: &[u8], book: &BookMeta) -> Result<HistoryEntry> {
         let canonical = normalize_path(path);
         let canonical_str = canonical.to_string_lossy().into_owned();
         let file_hash = hash_bytes(bytes);
@@ -215,7 +222,17 @@ impl Store {
         {
             let cover_path = match existing.cover_path {
                 Some(path) if path.exists() => Some(path),
-                _ => self.save_cover_cache(&file_hash, epub)?,
+                _ => self.save_cover_cache(&file_hash, book.cover.as_deref())?,
+            };
+            let title = if book.author.is_empty() && book.cover.is_none() && !existing.title.is_empty() {
+                &existing.title
+            } else {
+                &book.title
+            };
+            let author = if book.author.is_empty() {
+                &existing.author
+            } else {
+                &book.author
             };
             self.conn.execute(
                 "UPDATE reading_history
@@ -225,8 +242,8 @@ impl Store {
                 params![
                     existing.id,
                     canonical_str,
-                    epub.title,
-                    epub.author,
+                    title,
+                    author,
                     cover_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
                 ],
             )?;
@@ -242,14 +259,19 @@ impl Store {
                     "{HISTORY_SELECT} WHERE file_path=?1 AND title=?2
                      ORDER BY last_opened_at DESC, id DESC LIMIT 1"
                 ),
-                params![&canonical_str, &epub.title],
+                params![&canonical_str, &book.title],
                 map_history_row,
             )
             .optional()?
         {
             let cover_path = self
-                .save_cover_cache(&file_hash, epub)?
+                .save_cover_cache(&file_hash, book.cover.as_deref())?
                 .or(existing.cover_path);
+            let author = if book.author.is_empty() {
+                &existing.author
+            } else {
+                &book.author
+            };
             self.conn.execute(
                 "UPDATE reading_history
                  SET file_hash=?2, author=?3, cover_path=?4, hidden=0,
@@ -258,7 +280,7 @@ impl Store {
                 params![
                     existing.id,
                     file_hash,
-                    epub.author,
+                    author,
                     cover_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
                 ],
             )?;
@@ -267,15 +289,15 @@ impl Store {
                 .context("无法读取已更新的历史记录");
         }
 
-        let cover_path = self.save_cover_cache(&file_hash, epub)?;
+        let cover_path = self.save_cover_cache(&file_hash, book.cover.as_deref())?;
         self.conn.execute(
             "INSERT INTO reading_history(file_hash, file_path, title, author, cover_path)
              VALUES(?1, ?2, ?3, ?4, ?5)",
             params![
                 file_hash,
                 canonical_str,
-                epub.title,
-                epub.author,
+                book.title,
+                book.author,
                 cover_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
             ],
         )?;
@@ -290,7 +312,7 @@ impl Store {
         id: i64,
         new_path: &Path,
         bytes: &[u8],
-        epub: &Epub,
+        book: &BookMeta,
     ) -> Result<HistoryEntry> {
         let canonical = normalize_path(new_path);
         let canonical_str = canonical.to_string_lossy().into_owned();
@@ -306,11 +328,11 @@ impl Store {
             .optional()?
         {
             if existing_by_hash.id != id {
-                return self.record_open(&canonical, bytes, epub);
+                return self.record_open(&canonical, bytes, book);
             }
         }
 
-        let cover_path = self.save_cover_cache(&file_hash, epub)?;
+        let cover_path = self.save_cover_cache(&file_hash, book.cover.as_deref())?;
         self.conn.execute(
             "UPDATE reading_history
              SET file_hash=?2, file_path=?3, title=?4, author=?5,
@@ -321,12 +343,58 @@ impl Store {
                 id,
                 file_hash,
                 canonical_str,
-                epub.title,
-                epub.author,
+                book.title,
+                book.author,
                 cover_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
             ],
         )?;
         self.get_entry(id)?.context("无法读取重新定位后的历史记录")
+    }
+
+    /// Enrich title, author, or cover extracted asynchronously by foliate-js
+    /// (e.g. for MOBI / AZW3 or non-UTF-8 FB2 books).
+    pub fn update_metadata(
+        &self,
+        book_id: i64,
+        title: Option<&str>,
+        author: Option<&str>,
+        cover: Option<&[u8]>,
+    ) -> Result<bool> {
+        let Some(existing) = self.get_entry(book_id)? else {
+            return Ok(false);
+        };
+        let next_title = title
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&existing.title);
+        let next_author = author
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&existing.author);
+        let has_cover = existing.cover_path.as_ref().is_some_and(|p| p.exists());
+        let new_cover = if !has_cover {
+            self.save_cover_cache(&existing.file_hash, cover)?
+        } else {
+            None
+        };
+        let changed =
+            next_title != existing.title || next_author != existing.author || new_cover.is_some();
+        if !changed {
+            return Ok(false);
+        }
+        self.conn.execute(
+            "UPDATE reading_history
+             SET title=?2, author=?3, cover_path=COALESCE(?4, cover_path),
+                 updated_at=datetime('now', 'localtime')
+             WHERE id=?1",
+            params![
+                book_id,
+                next_title,
+                next_author,
+                new_cover.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            ],
+        )?;
+        Ok(true)
     }
 
     /// Hide a book from the Recent Reading list and clear its cached cover,
@@ -448,7 +516,7 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::{Store, cover_extension, hash_bytes};
-    use crate::epub::Epub;
+    use crate::book::BookMeta;
     use std::fs;
 
     fn temp_dir() -> std::path::PathBuf {
@@ -458,8 +526,8 @@ mod tests {
         dir
     }
 
-    fn sample_epub(title: &str) -> Epub {
-        Epub {
+    fn sample_book(title: &str) -> BookMeta {
+        BookMeta {
             title: title.to_owned(),
             author: "Author".to_owned(),
             cover: Some(b"\x89PNG\r\n\x1a\ncover".to_vec()),
@@ -470,7 +538,7 @@ mod tests {
     fn hash_matches_across_moved_file_and_preserves_progress_and_annotations() {
         let root = temp_dir();
         let store = Store::open_in(root.clone()).unwrap();
-        let epub = sample_epub("The Book");
+        let book = sample_book("The Book");
         let bytes = b"fake-epub-binary-content";
 
         let path_a = root.join("folder_a").join("book.epub");
@@ -479,7 +547,7 @@ mod tests {
         fs::create_dir_all(path_b.parent().unwrap()).unwrap();
         fs::write(&path_a, bytes).unwrap();
 
-        let entry = store.record_open(&path_a, bytes, &epub).unwrap();
+        let entry = store.record_open(&path_a, bytes, &book).unwrap();
         assert_eq!(entry.file_hash, hash_bytes(bytes));
         assert!(entry.cover_path.as_ref().is_some_and(|p| p.exists()));
 
@@ -493,7 +561,7 @@ mod tests {
 
         // Move the file to a new path and open again
         fs::rename(&path_a, &path_b).unwrap();
-        let reopened = store.record_open(&path_b, bytes, &epub).unwrap();
+        let reopened = store.record_open(&path_b, bytes, &book).unwrap();
         assert_eq!(reopened.id, entry.id);
         assert_eq!(reopened.file_path, fs::canonicalize(&path_b).unwrap());
         assert_eq!(reopened.cfi.as_deref(), Some(cfi));
@@ -510,7 +578,7 @@ mod tests {
         assert_eq!(store.annotations(reopened.id).unwrap()[0].color, "#86EFAC");
 
         // Hiding from history clears cached cover & hides from list,
-        // but keeps progress, annotations, and the user's EPUB on disk.
+        // but keeps progress, annotations, and the user's file on disk.
         let cached_cover = reopened.cover_path.clone().unwrap();
         assert!(cached_cover.exists());
         store.remove_history(reopened.id).unwrap();
@@ -519,7 +587,7 @@ mod tests {
         assert!(path_b.exists());
 
         // Re-opening brings the book back to history with fresh cover, progress, and annotations intact.
-        let restored = store.record_open(&path_b, bytes, &epub).unwrap();
+        let restored = store.record_open(&path_b, bytes, &book).unwrap();
         assert_eq!(restored.id, reopened.id);
         assert_eq!(restored.cfi.as_deref(), Some(cfi));
         assert_eq!(restored.fraction, 0.42);
@@ -529,6 +597,36 @@ mod tests {
 
         store.delete_annotation(restored.id, cfi).unwrap();
         assert!(store.annotations(restored.id).unwrap().is_empty());
+
+        // Async metadata enrichment (e.g. MOBI/AZW3) updates title, author, and caches cover.
+        let mobi_path = root.join("folder_b").join("sample.azw3");
+        let mobi_bytes = b"fake-azw3-binary";
+        fs::write(&mobi_path, mobi_bytes).unwrap();
+        let mobi_entry = store
+            .record_open(
+                &mobi_path,
+                mobi_bytes,
+                &BookMeta {
+                    title: "sample".to_owned(),
+                    author: String::new(),
+                    cover: None,
+                },
+            )
+            .unwrap();
+        assert!(mobi_entry.cover_path.is_none());
+        let changed = store
+            .update_metadata(
+                mobi_entry.id,
+                Some("Real Title"),
+                Some("Real Author"),
+                Some(b"\x89PNG\r\n\x1a\nmobi-cover"),
+            )
+            .unwrap();
+        assert!(changed);
+        let enriched = store.get_entry(mobi_entry.id).unwrap().unwrap();
+        assert_eq!(enriched.title, "Real Title");
+        assert_eq!(enriched.author, "Real Author");
+        assert!(enriched.cover_path.as_ref().is_some_and(|p| p.exists()));
 
         let _ = fs::remove_dir_all(&root);
     }

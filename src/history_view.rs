@@ -1,5 +1,7 @@
 use crate::{
-    AppState, epub, is_epub_path, open_epub_paths, open_reader_for_entry, prompt_open_epubs,
+    AppState,
+    book::{is_supported_book_path, parse_book},
+    open_book_paths, open_reader_for_entry, prompt_open_books,
     store::{HistoryEntry, Store},
 };
 use anyhow::Context as _;
@@ -66,7 +68,7 @@ impl HistoryView {
         let path = entry.file_path;
         let app: &mut App = cx;
         app.defer(move |cx| {
-            open_epub_paths(vec![path], false, cx);
+            open_book_paths(vec![path], false, cx);
         });
     }
 
@@ -76,19 +78,19 @@ impl HistoryView {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("重新定位 EPUB".into()),
+            prompt: Some("重新定位电子书".into()),
         });
         cx.spawn(async move |view, cx| {
             let Ok(Ok(Some(paths))) = result.await else {
                 return;
             };
-            let Some(path) = paths.into_iter().find(|p| is_epub_path(p)) else {
+            let Some(path) = paths.into_iter().find(|p| is_supported_book_path(p)) else {
                 return;
             };
             let prepared = fs::read(&path)
                 .with_context(|| format!("无法读取 {}", path.display()))
                 .and_then(|bytes| {
-                    let parsed = epub::parse(&path)
+                    let parsed = parse_book(&path, &bytes)
                         .with_context(|| format!("无法解析 {}", path.display()))?;
                     let entry = store.relocate_entry(id, &path, &bytes, &parsed)?;
                     Ok((entry, bytes))
@@ -128,7 +130,7 @@ impl Render for HistoryView {
             .text_color(rgb(0x1d1d1f))
             .on_drop(|paths: &ExternalPaths, _, cx| {
                 let paths = paths.paths().to_vec();
-                cx.defer(move |cx| open_epub_paths(paths, false, cx));
+                cx.defer(move |cx| open_book_paths(paths, false, cx));
             })
             .when(!window.is_fullscreen(), |this| {
                 this.child(
@@ -197,8 +199,8 @@ impl Render for HistoryView {
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(rgb(0xffffff))
                                     .cursor_pointer()
-                                    .on_click(|_, _, cx| prompt_open_epubs(cx))
-                                    .child("打开 EPUB"),
+                                    .on_click(|_, _, cx| prompt_open_books(cx))
+                                    .child("打开电子书"),
                             ),
                     )
                     .when_some(self.error.clone(), |this, error| {
@@ -268,7 +270,13 @@ impl Render for HistoryView {
                                 div()
                                     .text_xs()
                                     .text_color(rgb(0x86868b))
-                                    .child("将 .epub 文件拖到这里，或点击右上角“打开 EPUB”（⌘O）"),
+                                    .child("将电子书拖到这里，或点击右上角“打开电子书”（⌘O）"),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(0xa1a1a6))
+                                    .child("支持 EPUB · AZW3 · MOBI · CBZ · FB2"),
                             )
                             .into_any_element()
                     } else {
@@ -562,7 +570,7 @@ impl Render for HistoryView {
                                 .text_center()
                                 .text_xs()
                                 .text_color(rgb(0xa1a1a6))
-                                .child("点击书目继续阅读 · 拖入 .epub 文件或按 ⌘O 打开新书"),
+                                .child("点击书目继续阅读 · 拖入 EPUB / AZW3 / MOBI / CBZ / FB2 或按 ⌘O 打开"),
                         )
                     }),
             )

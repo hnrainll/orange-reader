@@ -2,7 +2,7 @@
 name = "verso"
 version = "2.0.0"
 edition = "2024"
-description = "macOS EPUB reader with GPUI Kit and foliate-js"
+description = "macOS e-book reader (EPUB, AZW3, MOBI, CBZ, FB2) with GPUI Kit and foliate-js"
 
 [dependencies]
 anyhow = "1"

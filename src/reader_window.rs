@@ -1,6 +1,7 @@
 use crate::{
     NextPage, PrevPage, ToggleAppearance, ToggleFullscreen, ToggleNotes, ToggleToc,
-    open_epub_paths, open_or_focus_history_window, prompt_open_epubs, refresh_history,
+    book::decode_base64,
+    open_book_paths, open_or_focus_history_window, prompt_open_books, refresh_history,
     server::ReaderServer,
     settings::{ReaderSettings, is_valid_theme, theme_bg},
     store::Store,
@@ -55,7 +56,11 @@ impl ReaderWindow {
                     })
                     .with_ipc_handler(move |request| {
                         let body = request.body();
-                        eprintln!("[foliate-js] {body}");
+                        if body.len() <= 2048 {
+                            eprintln!("[foliate-js] {body}");
+                        } else {
+                            eprintln!("[foliate-js] ({} bytes)", body.len());
+                        }
                         let Ok(message) = serde_json::from_str::<Value>(body) else {
                             return;
                         };
@@ -71,7 +76,7 @@ impl ReaderWindow {
                             Some("open-file") => {
                                 let app = async_app.clone();
                                 app.spawn(async move |cx| {
-                                    let _ = cx.update(prompt_open_epubs);
+                                    let _ = cx.update(prompt_open_books);
                                 })
                                 .detach();
                                 return;
@@ -176,6 +181,35 @@ impl ReaderWindow {
                                 Some(cfi) => ipc_store.delete_annotation(book_id, cfi),
                                 None => return,
                             },
+                            Some("metadata") => {
+                                let title = message
+                                    .get("title")
+                                    .and_then(Value::as_str)
+                                    .map(str::trim)
+                                    .filter(|text| !text.is_empty() && text.len() < 512);
+                                let author = message
+                                    .get("author")
+                                    .and_then(Value::as_str)
+                                    .map(str::trim)
+                                    .filter(|text| !text.is_empty() && text.len() < 512);
+                                let cover = message
+                                    .get("coverBase64")
+                                    .and_then(Value::as_str)
+                                    .filter(|raw| !raw.is_empty() && raw.len() < 8 * 1024 * 1024)
+                                    .and_then(decode_base64);
+                                match ipc_store.update_metadata(
+                                    book_id,
+                                    title,
+                                    author,
+                                    cover.as_deref(),
+                                ) {
+                                    Ok(changed) => {
+                                        should_refresh_history = changed;
+                                        Ok(())
+                                    }
+                                    Err(error) => Err(error),
+                                }
+                            }
                             _ => return,
                         };
                         if let Err(error) = result {
@@ -225,7 +259,7 @@ impl Render for ReaderWindow {
             .on_action(|_: &ToggleFullscreen, window, _| window.toggle_fullscreen())
             .on_drop(|paths: &ExternalPaths, _, cx| {
                 let paths = paths.paths().to_vec();
-                cx.defer(move |cx| open_epub_paths(paths, false, cx));
+                cx.defer(move |cx| open_book_paths(paths, false, cx));
             })
             .when(!window.is_fullscreen(), |this| {
                 this.child(

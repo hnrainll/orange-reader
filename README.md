@@ -1,8 +1,8 @@
 # Verso
 
-轻量级 macOS 原生 EPUB 阅读器。界面使用 GPUI Kit，书页由嵌入的 WKWebView 和 foliate-js 排版。阅读器及其网页资源一起编译进单个可执行文件，运行时不需要 Electron、Node.js 或源码目录。
+轻量级 macOS 原生电子书阅读器，支持 **EPUB、AZW3 / MOBI（无 DRM）、CBZ、FB2 / FBZ / FB2.ZIP**。界面使用 GPUI Kit，书页由嵌入的 WKWebView 和 foliate-js 排版。阅读器及其网页资源一起编译进单个可执行文件，运行时不需要 Electron、Node.js 或源码目录。
 
-Verso **不做书架或文件拷贝管理**——你的 EPUB 留在原本的文件夹里，像使用 macOS 预览或 IINA 一样自然打开阅读；应用仅记录**最近阅读历史**（看过哪本、文件在什么位置、看到了哪里）以及对应的高亮与阅读偏好。
+Verso **不做书架或文件拷贝管理**——你的电子书留在原本的文件夹里，像使用 macOS 预览或 IINA 一样自然打开阅读；应用仅记录**最近阅读历史**（看过哪本、文件在什么位置、看到了哪里）以及对应的高亮与阅读偏好。
 
 ## 开发运行
 
@@ -12,9 +12,9 @@ Verso **不做书架或文件拷贝管理**——你的 EPUB 留在原本的文�
 cargo run
 ```
 
-- 无参数启动：打开「最近阅读」窗口，可点击「打开 EPUB」（`⌘O`）或直接把 `.epub` 拖入窗口开始阅读。
-- 直接打开书籍：`cargo run -- /path/to/book.epub` 直接弹出阅读窗口，并自动记录历史与进度（支持同时打开多本书窗口）。
-- 打包安装后：支持在 Finder 中双击 `.epub` 或通过右键「打开方式 → Verso」打开。
+- 无参数启动：打开「最近阅读」窗口，可点击「打开电子书」（`⌘O`）或直接把电子书拖入窗口开始阅读。
+- 直接打开书籍：`cargo run -- /path/to/book.epub`（同样支持 `.azw3`/`.mobi`/`.cbz`/`.fb2`/`.fbz`/`.fb2.zip`）直接弹出阅读窗口，并自动记录历史与进度（支持同时打开多本书窗口）。
+- 打包安装后：支持在 Finder 中双击电子书或通过右键「打开方式 → Verso」打开。
 - 隔离测试数据：`VERSO_DATA_DIR=/private/tmp/verso-test cargo run` 可使用临时目录，不影响日常阅读记录。
 
 ## 功能与数据
@@ -51,7 +51,8 @@ make test
 - `src/server.rs`：loopback 本地资源 HTTP 服务与内嵌 `foliate-js/` 资源。
 - `src/settings.rs`：阅读排版与主题设置模型及校验。
 - `src/reader.html`：WKWebView 中的 foliate-js 阅读交互。
-- `src/epub.rs`：打开时读取 EPUB 元数据和封面。
+- `src/book.rs`：多格式识别（EPUB / AZW3 / MOBI / CBZ / FB2 / FBZ）与元数据/封面解析调度。
+- `src/epub.rs`：EPUB OPF 元数据和封面解析。
 - `src/store.rs`：SQLite 阅读历史、进度、高亮与设置（`history.db`）。
 - `foliate-js/`：EPUB 排版代码，随应用编译进可执行文件。升级可使用 `scripts/update-foliate-js.sh [ref]`，当前同步的上游版本记录在 `scripts/foliate-js-upstream.txt`。
 - `scripts/package-macos.sh`：创建 macOS 应用包。

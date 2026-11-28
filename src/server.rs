@@ -26,7 +26,11 @@ impl Drop for ReaderServer {
     }
 }
 
-fn serve(mut stream: TcpStream, book: Option<&[u8]>, session: Option<&str>) -> std::io::Result<()> {
+fn serve(
+    mut stream: TcpStream,
+    book: Option<(&[u8], &str)>,
+    session: Option<&str>,
+) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     let mut request = [0u8; 8192];
     let length = stream.read(&mut request)?;
@@ -46,9 +50,9 @@ fn serve(mut stream: TcpStream, book: Option<&[u8]>, session: Option<&str>) -> s
             "text/html; charset=utf-8",
             include_bytes!("reader.html").to_vec(),
         )
-    } else if path == "/book.epub" {
+    } else if path == "/book" || path == "/book.epub" {
         match book {
-            Some(bytes) => ("200 OK", "application/epub+zip", bytes.to_vec()),
+            Some((bytes, mime)) => ("200 OK", mime, bytes.to_vec()),
             None => ("404 Not Found", "text/plain", Vec::new()),
         }
     } else if path == "/session.json" {
@@ -90,7 +94,10 @@ fn serve(mut stream: TcpStream, book: Option<&[u8]>, session: Option<&str>) -> s
     stream.write_all(&body)
 }
 
-pub fn start_server(book: Option<Vec<u8>>, session: Option<String>) -> ReaderServer {
+pub fn start_server(
+    book: Option<(Vec<u8>, &'static str)>,
+    session: Option<String>,
+) -> ReaderServer {
     let listener = TcpListener::bind("127.0.0.1:0").expect("无法启动本地阅读页服务器");
     listener
         .set_nonblocking(true)
@@ -108,7 +115,10 @@ pub fn start_server(book: Option<Vec<u8>>, session: Option<String>) -> ReaderSer
                         eprintln!("无法配置资源连接：{error}");
                         continue;
                     }
-                    if let Err(error) = serve(stream, book.as_deref(), session.as_deref()) {
+                    let book_ref = (*book)
+                        .as_ref()
+                        .map(|(bytes, mime)| (bytes.as_slice(), *mime));
+                    if let Err(error) = serve(stream, book_ref, session.as_deref()) {
                         eprintln!("资源请求失败：{error}");
                     }
                 }
@@ -130,9 +140,13 @@ mod tests {
     use super::FoliateAssets;
 
     #[test]
-    fn embeds_epub_renderer() {
+    fn embeds_book_renderers() {
         assert!(FoliateAssets::get("view.js").is_some());
         assert!(FoliateAssets::get("epub.js").is_some());
+        assert!(FoliateAssets::get("mobi.js").is_some());
+        assert!(FoliateAssets::get("comic-book.js").is_some());
+        assert!(FoliateAssets::get("fb2.js").is_some());
         assert!(FoliateAssets::get("vendor/zip.js").is_some());
+        assert!(FoliateAssets::get("vendor/fflate.js").is_some());
     }
 }
