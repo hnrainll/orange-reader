@@ -54,7 +54,7 @@ for rel in "${files[@]}"; do
   cp "$src" "$stage_dir/$rel"
 done
 
-# Orange Reader does not bundle vendor/pdfjs; keep a lightweight stub for view.js dynamic import.
+# Verso does not bundle vendor/pdfjs; keep a lightweight stub for view.js dynamic import.
 cat > "$stage_dir/pdf.js" <<'EOF'
 export const makePDF = () => { throw new Error('PDF not supported') }
 EOF
@@ -73,4 +73,4 @@ echo "Synced foliate-js to $commit ($commit_date): $commit_subject"
 echo "Next steps:"
 echo "  git diff --stat foliate-js/"
 echo "  cargo test"
-echo "  ORANGE_READER_DATA_DIR=/private/tmp/orange-reader-test cargo run -- --book-id 1 --self-test"
+echo "  VERSO_DATA_DIR=/private/tmp/verso-test cargo run -- /path/to/book.epub --self-test"

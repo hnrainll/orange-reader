@@ -1,9 +1,9 @@
 .DEFAULT_GOAL := help
 
-TEST_DATA_DIR ?= /private/tmp/orange-reader-test
+TEST_DATA_DIR ?= /private/tmp/verso-test
 REF ?= main
-APP_NAME := Orange Reader.app
-DIST_ZIP := dist/Orange Reader-2.0.0-macos.zip
+APP_NAME := Verso.app
+DIST_ZIP := dist/Verso-2.0.0-macos.zip
 
 .PHONY: help run dev open self-test check test fmt fmt-check lint build package install update-foliate clean-dist clean
 
@@ -19,9 +19,9 @@ run: ## 启动应用（可传 BOOK=/path/to/book.epub 直接打开）
 
 dev: ## 使用隔离数据目录启动应用（不触碰日常历史，可传 BOOK=...）
 	@if [ -n "$(BOOK)" ]; then \
-		ORANGE_READER_DATA_DIR="$(TEST_DATA_DIR)" cargo run -- "$(BOOK)"; \
+		VERSO_DATA_DIR="$(TEST_DATA_DIR)" cargo run -- "$(BOOK)"; \
 	else \
-		ORANGE_READER_DATA_DIR="$(TEST_DATA_DIR)" cargo run; \
+		VERSO_DATA_DIR="$(TEST_DATA_DIR)" cargo run; \
 	fi
 
 open: ## 直接打开指定 EPUB（用法：make open BOOK=/path/to/book.epub）
@@ -30,7 +30,7 @@ open: ## 直接打开指定 EPUB（用法：make open BOOK=/path/to/book.epub）
 
 self-test: ## 使用隔离目录运行页内自测（用法：make self-test BOOK=/path/to/book.epub）
 	@test -n "$(BOOK)" || { echo "请指定测试用 EPUB，例如：make self-test BOOK=/path/to/book.epub"; exit 1; }
-	ORANGE_READER_DATA_DIR="$(TEST_DATA_DIR)" cargo run -- "$(BOOK)" --self-test
+	VERSO_DATA_DIR="$(TEST_DATA_DIR)" cargo run -- "$(BOOK)" --self-test
 
 check: ## 编译检查与 Info.plist 校验
 	plutil -lint packaging/macos/Info.plist
@@ -54,8 +54,8 @@ build: ## 构建 Release 可执行文件
 package: ## 打包 macOS .app 压缩包到 dist/
 	scripts/package-macos.sh
 
-install: package ## 打包并安装 Orange Reader.app 到 /Applications
-	@tmp_dir=$$(mktemp -d "$${TMPDIR:-/tmp}/orange-reader-install.XXXXXX"); \
+install: package ## 打包并安装 Verso.app 到 /Applications
+	@tmp_dir=$$(mktemp -d "$${TMPDIR:-/tmp}/verso-install.XXXXXX"); \
 	trap 'rm -rf "$$tmp_dir"' EXIT; \
 	ditto -x -k "$(DIST_ZIP)" "$$tmp_dir"; \
 	rm -rf "/Applications/$(APP_NAME)"; \

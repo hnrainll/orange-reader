@@ -1,8 +1,8 @@
-# Orange Reader
+# Verso
 
 轻量级 macOS 原生 EPUB 阅读器。界面使用 GPUI Kit，书页由嵌入的 WKWebView 和 foliate-js 排版。阅读器及其网页资源一起编译进单个可执行文件，运行时不需要 Electron、Node.js 或源码目录。
 
-Orange Reader **不做书架或文件拷贝管理**——你的 EPUB 留在原本的文件夹里，像使用 macOS 预览或 IINA 一样自然打开阅读；应用仅记录**最近阅读历史**（看过哪本、文件在什么位置、看到了哪里）以及对应的高亮与阅读偏好。
+Verso **不做书架或文件拷贝管理**——你的 EPUB 留在原本的文件夹里，像使用 macOS 预览或 IINA 一样自然打开阅读；应用仅记录**最近阅读历史**（看过哪本、文件在什么位置、看到了哪里）以及对应的高亮与阅读偏好。
 
 ## 开发运行
 
@@ -12,34 +12,36 @@ Orange Reader **不做书架或文件拷贝管理**——你的 EPUB 留在原�
 cargo run
 ```
 
-- 无参数启动：打开「最近阅读」窗口，可点击「打开 EPUB…」（`⌘O`）或直接把 `.epub` 拖入窗口开始阅读。
+- 无参数启动：打开「最近阅读」窗口，可点击「打开 EPUB」（`⌘O`）或直接把 `.epub` 拖入窗口开始阅读。
 - 直接打开书籍：`cargo run -- /path/to/book.epub` 直接弹出阅读窗口，并自动记录历史与进度（支持同时打开多本书窗口）。
-- 打包安装后：支持在 Finder 中双击 `.epub` 或通过右键「打开方式 → Orange Reader」打开。
-- 隔离测试数据：`ORANGE_READER_DATA_DIR=/private/tmp/orange-reader-test cargo run` 可使用临时目录，不影响日常阅读记录。
+- 打包安装后：支持在 Finder 中双击 `.epub` 或通过右键「打开方式 → Verso」打开。
+- 隔离测试数据：`VERSO_DATA_DIR=/private/tmp/verso-test cargo run` 可使用临时目录，不影响日常阅读记录。
 
 ## 功能与数据
 
-- **最近阅读历史**：按最近阅读时间排序，显示书名、作者、磁盘文件路径、上次阅读章节与百分比进度；支持一键继续阅读、在 Finder 中显示位置、移出历史（仅清除记录，**绝不删除原文件**）。
+- **最近阅读历史**：按最近阅读时间排序，显示书名、作者、磁盘文件路径、上次阅读章节与百分比进度；支持点击继续阅读、在 Finder 中显示位置、移出历史（仅从列表隐藏并清理封面缓存，保留进度与高亮，**绝不删除原文件**）。
 - **路径 + 内容哈希双匹配**：即使把 `.epub` 移动到别的目录或重命名，再次打开时会自动通过 SHA-256 识别为同一本书，自动更新路径并续上原有 CFI 进度与高亮；若历史中的文件已移动或删除，会给出提示并支持「重新定位」。
-- **阅读体验**：支持目录跳转、键盘/按钮翻页、选字浮层、多色高亮与删除；阅读位置以 EPUB CFI 保存；字号、字体、行距、字距、段距、内容宽度和明暗主题自动保存。
-- **数据位置**：默认保存在系统配置目录的 `orange-reader/history.db`（及 `covers/` 封面缓存），不拷贝 `.epub` 文件。
+- **阅读体验**：支持目录跳转、方向键/空格翻页、点击正文显隐工具栏、选字浮层、多色高亮与删除；阅读位置以 EPUB CFI 保存；字号、字体、行距、页宽、上下边距、字距、段距、单/双页布局与 4 套主题自动保存。
+- **数据位置**：默认保存在系统配置目录的 `verso/history.db`（及 `covers/` 封面缓存），不拷贝 `.epub` 文件。
 
 ## macOS 打包
 
 ```sh
-scripts/package-macos.sh
+make package
+# 或直接打包并安装到 /Applications：
+make install
 ```
 
-脚本生成 `dist/Orange Reader-2.0.0-macos.zip`。解压后可把 `Orange Reader.app` 放进“应用程序”目录。脚本使用 ad hoc 签名完成本机验证；公开分发时仍需要开发者证书签名和 Apple 公证。
+脚本生成 `dist/Verso-2.0.0-macos.zip`。解压后可把 `Verso.app` 放进“应用程序”目录。脚本使用 ad hoc 签名完成本机验证；公开分发时仍需要开发者证书签名和 Apple 公证。
 
 ## 验证
 
 ```sh
-cargo test
-cargo check
+make check
+make test
 ```
 
-对任意本地 EPUB，可用 `ORANGE_READER_DATA_DIR=/private/tmp/orange-reader-test cargo run -- /path/to/book.epub --self-test` 执行页内交互自测；终端出现 `self-test-complete` 表示目录跳转、选字工具、高亮创建/改色及删除均已运行。
+对任意本地 EPUB，可用 `VERSO_DATA_DIR=/private/tmp/verso-test cargo run -- /path/to/book.epub --self-test` 执行页内交互自测；终端出现 `self-test-complete` 表示目录跳转、选字工具、高亮创建/改色及删除均已运行。
 
 ## 代码结构
 

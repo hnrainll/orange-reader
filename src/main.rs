@@ -28,7 +28,7 @@ use std::{
 use store::{HistoryEntry, Store};
 
 actions!(
-    orange_reader,
+    verso,
     [
         OpenFile,
         ShowHistory,
@@ -238,7 +238,7 @@ fn open_or_focus_history_window(cx: &mut App) {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(760.), px(560.)), cx)),
         titlebar: Some(TitlebarOptions {
-            title: Some("Orange Reader".into()),
+            title: Some("Verso".into()),
             appears_transparent: true,
             ..Default::default()
         }),
@@ -1310,7 +1310,7 @@ fn configure_menus(cx: &mut App) {
     });
     cx.on_action(|_: &QuitApp, cx| cx.quit());
     cx.set_menus(vec![
-        Menu::new("Orange Reader").items([MenuItem::action("退出 Orange Reader", QuitApp)]),
+        Menu::new("Verso").items([MenuItem::action("退出 Verso", QuitApp)]),
         Menu::new("文件").items([
             MenuItem::action("打开 EPUB…", OpenFile),
             MenuItem::action("最近阅读", ShowHistory),

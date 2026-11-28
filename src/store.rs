@@ -82,7 +82,7 @@ const HISTORY_SELECT: &str = "SELECT id, file_hash, file_path, title, author, co
 
 impl Store {
     pub fn open() -> Result<Self> {
-        let root = if let Some(path) = std::env::var_os("ORANGE_READER_DATA_DIR") {
+        let root = if let Some(path) = std::env::var_os("VERSO_DATA_DIR") {
             PathBuf::from(path)
         } else {
             let base = if cfg!(target_os = "windows") {
@@ -90,7 +90,18 @@ impl Store {
             } else {
                 dirs::config_dir().context("Config directory unavailable")?
             };
-            base.join("orange-reader")
+            let target = base.join("verso");
+            let legacy = base.join("orange-reader");
+            if !target.join("history.db").exists() && legacy.join("history.db").exists() {
+                let _ = fs::create_dir_all(&target);
+                for file in ["history.db", "history.db-wal", "history.db-shm"] {
+                    let src = legacy.join(file);
+                    if src.exists() {
+                        let _ = fs::copy(src, target.join(file));
+                    }
+                }
+            }
+            target
         };
         Self::open_in(root)
     }
@@ -442,7 +453,7 @@ mod tests {
 
     fn temp_dir() -> std::path::PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("orange-reader-store-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("verso-store-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         dir
     }

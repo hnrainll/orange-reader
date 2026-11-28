@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn imports_image_only_book() {
         let path =
-            std::env::temp_dir().join(format!("orange-reader-{}.epub", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("verso-{}.epub", uuid::Uuid::new_v4()));
         let mut zip = ZipWriter::new(File::create(&path).unwrap());
         let options = SimpleFileOptions::default();
         for (name, body) in [
